@@ -1,0 +1,132 @@
+[
+  {
+    "updatedAt": "2026-07-04T10:40:13.681Z",
+    "createdAt": "2026-07-04T10:40:00.807Z",
+    "id": "5uv43KZGPL1Icge9",
+    "name": "Cognee Retrieve One",
+    "description": "Shared retrieval unit: takes {query}, runs one Cognee GRAPH_COMPLETION search on zettelkeistan_v3, returns {answer, sources}. Called by the chat brain's read paths (simple + decompose leaves).",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "id": "345b626c-a328-41bc-8ba3-f7ad8d2d368c",
+        "name": "When Called",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          260,
+          300
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "0f1bd552-5721-47d6-bbd3-11de9944ea8e",
+        "name": "Format Retrieval",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          700,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const items = $input.all();\nlet sources = [];\nfor (const it of items) {\n  const sr = it.json.search_result;\n  if (Array.isArray(sr)) sources.push(...sr);\n  else if (sr != null && sr !== '') sources.push(sr);\n}\nsources = sources.map(s => typeof s === 'string' ? s : JSON.stringify(s)).filter(Boolean);\nconst answer = sources.join('\\n\\n');\nreturn [{ json: { answer, sources } }];"
+        }
+      },
+      {
+        "id": "0c023e15-fe12-4ced-bd43-881d32285792",
+        "name": "Cognee Search",
+        "type": "n8n-nodes-cognee.cognee",
+        "typeVersion": 1,
+        "position": [
+          480,
+          300
+        ],
+        "parameters": {
+          "resource": "search",
+          "operation": "search",
+          "searchType": "GRAPH_COMPLETION",
+          "datasets": [
+            "zettelkeistan_v3"
+          ],
+          "query": "={{ $json.query }}",
+          "topK": 10
+        },
+        "credentials": {
+          "cogneeApi": {
+            "id": "rvhw3tMxtNWBoYSU",
+            "name": "Cognee account"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "When Called": {
+        "main": [
+          [
+            {
+              "node": "Cognee Search",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Cognee Search": {
+        "main": [
+          [
+            {
+              "node": "Format Retrieval",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": true
+    },
+    "staticData": null,
+    "meta": {
+      "aiBuilderAssisted": true,
+      "builderVariant": "mcp"
+    },
+    "nodeGroups": [],
+    "pinData": null,
+    "versionId": "9139577c-ee9a-41dc-8be5-8c4f3dba0dc9",
+    "activeVersionId": "9139577c-ee9a-41dc-8be5-8c4f3dba0dc9",
+    "versionCounter": 2,
+    "triggerCount": 0,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-07-04T10:40:00.809Z",
+        "createdAt": "2026-07-04T10:40:00.809Z",
+        "role": "workflow:owner",
+        "workflowId": "5uv43KZGPL1Icge9",
+        "projectId": "S86c7EPeVU37mKZK",
+        "project": {
+          "updatedAt": "2026-06-16T07:25:59.747Z",
+          "createdAt": "2026-06-16T07:24:59.347Z",
+          "id": "S86c7EPeVU37mKZK",
+          "name": "Sanjith Saravanan <sanjay200617@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "433c1b86-b399-43fd-ad66-a983d5a77276"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": null,
+      "description": null
+    }
+  }
+]

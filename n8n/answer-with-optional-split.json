@@ -1,0 +1,406 @@
+[
+  {
+    "updatedAt": "2026-07-04T11:04:34.114Z",
+    "createdAt": "2026-07-04T10:46:46.756Z",
+    "id": "EcK7bqSZd2CiEBvH",
+    "name": "Answer With Optional Split",
+    "description": "Depth-2 helper: takes {query, threshold}; under threshold -> one Cognee retrieval, over -> decompose once (L2, cap 5) + retrieve each + combine. Calls only 'Cognee Retrieve One', so depth is hard-capped at 2 (no recursion).",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "inputSource": "passthrough"
+        },
+        "id": "05d70eb5-807e-4c98-a2af-5da0c9cf6af8",
+        "name": "When Called",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          240,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const j = $input.first().json;\nconst q = (j.query || '').toString();\nlet th = parseInt(j.threshold, 10); if (!th) th = 40;\nconst t = q.trim();\nconst wc = t ? t.split(/\\s+/).length : 0;\nconst pathB = wc > th ? 'split' : 'direct';\nreturn [{ json: { query: q, threshold: th, wordCount: wc, pathB } }];"
+        },
+        "id": "0682c66e-9eb3-4013-b181-09a8fdabf804",
+        "name": "L2 Gate",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          448,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "loose",
+                    "version": 1
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.pathB }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "direct"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "loose",
+                    "version": 1
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.pathB }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "split"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "a1301077-ab14-4288-b617-3a141a6e1036",
+        "name": "Split?",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          640,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "5uv43KZGPL1Icge9"
+          },
+          "options": {
+            "waitForSubWorkflow": true
+          }
+        },
+        "id": "3e6622a2-a73b-4804-ae44-1fb8d0e1a2c2",
+        "name": "Retrieve Direct",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.3,
+        "position": [
+          976,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const j = $input.first().json;\nreturn [{ json: { answer: (j.answer || '').toString(), sources: j.sources || [] } }];"
+        },
+        "id": "9f7ce6b0-dda3-49c4-9559-c7d7ef902326",
+        "name": "Return B",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1568,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $json.query }}",
+          "options": {
+            "systemMessage": "Break the user's question into the minimal set of simpler sub-questions needed to answer it fully. Output ONLY a JSON array of sub-question strings, ordered so earlier ones can be answered first. No explanation, no thinking in the output.",
+            "enableStreaming": false
+          }
+        },
+        "id": "e8740a12-9586-416c-b3d8-5ee4d9496b11",
+        "name": "Decompose L2",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          864,
+          320
+        ]
+      },
+      {
+        "parameters": {
+          "model": "gemma4:e2b",
+          "options": {
+            "numCtx": 8192
+          }
+        },
+        "id": "d16a36af-66e0-4664-bdb3-e9f7a83cecba",
+        "name": "L2 Decompose Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+        "typeVersion": 1,
+        "position": [
+          672,
+          560
+        ],
+        "credentials": {
+          "ollamaApi": {
+            "id": "Zl9lspYFi45GrFwM",
+            "name": "Ollama account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "let raw = ($input.first().json.output || '').toString();\nraw = raw.replace(/<think>[\\s\\S]*?<\\/think>/gi, '').replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi, '').replace(/```(?:json)?/gi, '').trim();\nlet arr = [];\nconst m = raw.match(/\\[[\\s\\S]*\\]/);\nif (m) { try { const p = JSON.parse(m[0]); if (Array.isArray(p)) arr = p; } catch (e) {} }\narr = arr.map(x => (x == null ? '' : x.toString().trim())).filter(Boolean);\nconst seen = new Set(); const out = [];\nfor (const s of arr) { const k = s.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(s); } }\nconst capped = out.slice(0, 5);\nif (capped.length === 0) { return [{ json: { query: ($('L2 Gate').item.json.query) || '' } }]; }\nreturn capped.map(s => ({ json: { query: s } }));"
+        },
+        "id": "5b657083-b516-4659-96d7-6ffc87c65dd1",
+        "name": "Parse L2",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1024,
+          608
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const runs = $input.all();\nlet parts = [], sources = [];\nfor (const r of runs) { const a = (r.json.answer || '').toString(); if (a) parts.push(a); const s = r.json.sources || []; if (Array.isArray(s)) sources.push(...s); }\nreturn [{ json: { answer: parts.join('\\n\\n'), sources } }];"
+        },
+        "id": "c0eaf997-aa33-4a05-9743-9fff1c16a603",
+        "name": "Combine L2",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1328,
+          320
+        ]
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "5uv43KZGPL1Icge9"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {},
+            "matchingColumns": [],
+            "schema": [],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          },
+          "options": {
+            "waitForSubWorkflow": true
+          }
+        },
+        "id": "5ecd10ba-6f1a-4d33-9be6-b6cfccbb835f",
+        "name": "Retrieve L2",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.3,
+        "position": [
+          1536,
+          640
+        ]
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "id": "17a11f96-6d01-4e57-90b0-3ed7b878884e",
+        "name": "Loop L2",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          1216,
+          560
+        ]
+      }
+    ],
+    "connections": {
+      "When Called": {
+        "main": [
+          [
+            {
+              "node": "L2 Gate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "L2 Gate": {
+        "main": [
+          [
+            {
+              "node": "Split?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Split?": {
+        "main": [
+          [
+            {
+              "node": "Retrieve Direct",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Decompose L2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Retrieve Direct": {
+        "main": [
+          [
+            {
+              "node": "Return B",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Decompose L2": {
+        "main": [
+          [
+            {
+              "node": "Parse L2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "L2 Decompose Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Decompose L2",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse L2": {
+        "main": [
+          [
+            {
+              "node": "Loop L2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Combine L2": {
+        "main": [
+          [
+            {
+              "node": "Return B",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Retrieve L2": {
+        "main": [
+          [
+            {
+              "node": "Loop L2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop L2": {
+        "main": [
+          [
+            {
+              "node": "Combine L2",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Retrieve L2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": true,
+      "binaryMode": "separate"
+    },
+    "staticData": null,
+    "meta": {
+      "aiBuilderAssisted": true,
+      "builderVariant": "mcp"
+    },
+    "nodeGroups": [],
+    "pinData": {},
+    "versionId": "16ff8ae0-ba0d-41a0-a776-0b46ed18e56f",
+    "activeVersionId": "b052e2c3-e38d-4873-937e-eec42ef60873",
+    "versionCounter": 9,
+    "triggerCount": 0,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-07-04T10:46:46.757Z",
+        "createdAt": "2026-07-04T10:46:46.757Z",
+        "role": "workflow:owner",
+        "workflowId": "EcK7bqSZd2CiEBvH",
+        "projectId": "S86c7EPeVU37mKZK",
+        "project": {
+          "updatedAt": "2026-06-16T07:25:59.747Z",
+          "createdAt": "2026-06-16T07:24:59.347Z",
+          "id": "S86c7EPeVU37mKZK",
+          "name": "Sanjith Saravanan <sanjay200617@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "433c1b86-b399-43fd-ad66-a983d5a77276"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": null,
+      "description": null
+    }
+  }
+]

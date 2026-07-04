@@ -1,0 +1,838 @@
+[
+  {
+    "updatedAt": "2026-07-04T11:00:37.889Z",
+    "createdAt": "2026-07-04T06:33:35.231Z",
+    "id": "esKtUJ1YYfLlyOAT",
+    "name": "Zettelkeistan Chat Brain",
+    "description": "Chat brain for Zettelkeistan. Webhook {message,mode,history} from FastAPI relay; read = AI Agent (Ollama gemma4:e2b) + one Cognee search_knowledge tool; write = draft note JSON (edit gate, no save). Strips thinking, responds {reply,mode,sources,draft}.",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "zettel-chat",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "c0e2b72c-abc7-4d29-937b-2c5f25ce2a3c",
+        "name": "Chat Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          32,
+          384
+        ],
+        "webhookId": "eb5b8cf9-c874-4770-83c4-e906d3f2e4a9"
+      },
+      {
+        "parameters": {
+          "jsCode": "const item = $input.first().json;\nconst b = item.body || item;\nconst message = (b.message || '').toString();\nconst mode = b.mode === 'write' ? 'write' : 'read';\nconst history = Array.isArray(b.history) ? b.history : [];\nconst historyText = history.map(h => (h.role === 'assistant' ? 'Assistant: ' : 'User: ') + (h.content || '')).join('\\n');\nreturn [{ json: { message, mode, historyText } }];"
+        },
+        "id": "0c14e8ec-d516-4731-b559-b3d065733378",
+        "name": "Normalize Request",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          288,
+          384
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "loose",
+                    "version": 1
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.mode }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "read"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "loose",
+                    "version": 1
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.mode }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "write"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "2508fc76-67de-4875-adbc-7f012fc70e38",
+        "name": "Route By Mode",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          480,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        },
+        "id": "2f3174b1-a68c-43d9-95b2-4cf5a32077af",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.5,
+        "position": [
+          3184,
+          272
+        ]
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $('Normalize Request').item.json.message }}",
+          "options": {
+            "systemMessage": "You turn the user's message into a single atomic note. Respond with ONLY a JSON object of the form {\"title\": \"short title\", \"text\": \"note body\"}. Do not save anything, do not call tools, and do not add any text outside the JSON.",
+            "maxIterations": 2,
+            "enableStreaming": false
+          }
+        },
+        "id": "7cf4f1df-997f-403b-81e9-8e996e22b021",
+        "name": "Draft Note",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          2096,
+          1232
+        ]
+      },
+      {
+        "parameters": {
+          "model": "gemma4:e2b",
+          "options": {
+            "numCtx": 8192
+          }
+        },
+        "id": "75871850-711d-4b87-a449-9263dcc0d23e",
+        "name": "Ollama Write Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+        "typeVersion": 1,
+        "position": [
+          2096,
+          1408
+        ],
+        "credentials": {
+          "ollamaApi": {
+            "id": "Zl9lspYFi45GrFwM",
+            "name": "Ollama account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "let raw = ($input.first().json.output || '').toString();\nraw = raw.replace(/<think>[\\s\\S]*?<\\/think>/gi, '');\nraw = raw.replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi, '');\nraw = raw.replace(/<\\|?\\/?think\\|?>/gi, '').trim();\nlet draft = null;\ntry { const m = raw.match(/\\{[\\s\\S]*\\}/); if (m) { const o = JSON.parse(m[0]); draft = { title: (o.title || '').toString().slice(0, 500), text: (o.text || '').toString() }; } } catch (e) { draft = null; }\nif (!draft) { draft = { title: '', text: raw }; }\nconst reply = draft.title ? ('Draft: ' + draft.title + '\\n\\n' + draft.text) : ('Draft:\\n\\n' + draft.text);\nreturn [{ json: { reply, mode: 'write', sources: [], draft } }];"
+        },
+        "id": "747d920b-9fda-421a-9a0b-a2ee025a3ab9",
+        "name": "Assemble Write Draft",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2368,
+          1232
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const item = $input.first().json;\nconst message = (item.message || '').toString();\nlet threshold = 40;\ntry { const e = $env.DECOMP_WORD_THRESHOLD; if (e) threshold = parseInt(e, 10) || 40; } catch (x) {}\nconst trimmed = message.trim();\nconst wordCount = trimmed ? trimmed.split(/\\s+/).length : 0;\nconst path = wordCount > threshold ? 'decompose' : 'simple';\nconsole.log('[LengthGate] words=' + wordCount + ' threshold=' + threshold + ' path=' + path);\nreturn [{ json: { message, historyText: item.historyText || '', wordCount, threshold, path } }];"
+        },
+        "id": "db727d6a-9428-4fd4-91d4-cc15f501c6dd",
+        "name": "Length Gate",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          720,
+          128
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "loose",
+                    "version": 1
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.path }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "simple"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "loose",
+                    "version": 1
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.path }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "decompose"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "f40caab8-15f7-4429-acfc-4dcd09e70c4f",
+        "name": "Read Path",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          928,
+          128
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "q1",
+                "name": "query",
+                "value": "={{ $json.message }}",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "f62133b4-c4fa-4efd-bac1-8995c3b150b2",
+        "name": "Prep Query",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1104,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "5uv43KZGPL1Icge9"
+          },
+          "options": {
+            "waitForSubWorkflow": true
+          }
+        },
+        "id": "653094eb-98e2-4f9a-8452-ea070d7e7d93",
+        "name": "Execute Retrieval",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.3,
+        "position": [
+          1344,
+          128
+        ]
+      },
+      {
+        "parameters": {
+          "model": "gemma4:e2b",
+          "options": {
+            "numCtx": 8192
+          }
+        },
+        "id": "c8cd69e6-da6b-4699-88b6-6eae5c3294da",
+        "name": "Ollama Compose Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+        "typeVersion": 1,
+        "position": [
+          1728,
+          240
+        ],
+        "credentials": {
+          "ollamaApi": {
+            "id": "Zl9lspYFi45GrFwM",
+            "name": "Ollama account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $('Length Gate').item.json.message }}",
+          "options": {
+            "systemMessage": "=You answer questions from the user's personal knowledge notes. Using ONLY the retrieved notes provided below, write a clear, direct answer to the user's question. If the retrieved notes do not contain the answer, say you don't have that in your notes.\n\nRetrieved notes:\n{{ $json.answer }}",
+            "enableStreaming": false
+          }
+        },
+        "id": "7d63fc48-2cc2-4b6f-a314-adf5286939c5",
+        "name": "Compose Answer",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          1744,
+          -16
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "let reply = ($input.first().json.output || '').toString();\nreply = reply.replace(/<think>[\\s\\S]*?<\\/think>/gi, '');\nreply = reply.replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi, '');\nreply = reply.replace(/<\\|?\\/?think\\|?>/gi, '').trim();\nconst sources = $('Execute Retrieval').item.json.sources || [];\nreturn [{ json: { reply, mode: 'read', sources, draft: null } }];"
+        },
+        "id": "b1353c1b-cadb-4654-9734-fe82d91231b3",
+        "name": "Assemble Read",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2176,
+          -48
+        ]
+      },
+      {
+        "parameters": {
+          "model": "gemma4:e2b",
+          "options": {
+            "numCtx": 8192
+          }
+        },
+        "id": "42b6a53c-7607-472a-9d0d-eca7e1a5c163",
+        "name": "L1 Decompose Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+        "typeVersion": 1,
+        "position": [
+          1136,
+          512
+        ],
+        "credentials": {
+          "ollamaApi": {
+            "id": "Zl9lspYFi45GrFwM",
+            "name": "Ollama account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $('Length Gate').item.json.message }}",
+          "options": {
+            "systemMessage": "Break the user's question into the minimal set of simpler sub-questions needed to answer it fully. Output ONLY a JSON array of sub-question strings, ordered so earlier ones can be answered first. No explanation, no thinking in the output.",
+            "enableStreaming": false
+          }
+        },
+        "id": "d7cad485-5135-4909-888d-dd86f346bd91",
+        "name": "Decompose L1",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          1120,
+          336
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "let raw = ($input.first().json.output || '').toString();\nraw = raw.replace(/<think>[\\s\\S]*?<\\/think>/gi, '').replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi, '').replace(/```(?:json)?/gi, '').trim();\nlet arr = [];\nconst m = raw.match(/\\[[\\s\\S]*\\]/);\nif (m) { try { const p = JSON.parse(m[0]); if (Array.isArray(p)) arr = p; } catch (e) {} }\narr = arr.map(x => (x == null ? '' : x.toString().trim())).filter(Boolean);\nconst seen = new Set(); const out = [];\nfor (const s of arr) { const k = s.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(s); } }\nconst capped = out.slice(0, 5);\nif (capped.length === 0) { return [{ json: { subq: ($('Length Gate').item.json.message) || '' } }]; }\nreturn capped.map(s => ({ json: { subq: s } }));"
+        },
+        "id": "33c4dfe3-e8de-4f86-ab53-7844770a19da",
+        "name": "Parse L1",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1632,
+          656
+        ]
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "id": "919860c2-b994-4a78-a887-ff5ded5b72d1",
+        "name": "Loop L1",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          1840,
+          688
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "bq",
+                "name": "query",
+                "value": "={{ $json.subq }}",
+                "type": "string"
+              },
+              {
+                "id": "bt",
+                "name": "threshold",
+                "value": "={{ $('Length Gate').item.json.threshold }}",
+                "type": "number"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "4e39079e-0f69-4da8-8c88-4d5f7b0e01cd",
+        "name": "Prep B Input",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          2048,
+          704
+        ]
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "EcK7bqSZd2CiEBvH"
+          },
+          "options": {
+            "waitForSubWorkflow": true
+          }
+        },
+        "id": "343c94bd-356c-41f3-82e4-de8a33a5ac45",
+        "name": "Execute B",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.3,
+        "position": [
+          2256,
+          704
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const runs = $input.all();\nlet parts = [], sources = [];\nfor (const r of runs) { const a = (r.json.answer || '').toString(); if (a) parts.push(a); const s = r.json.sources || []; if (Array.isArray(s)) sources.push(...s); }\nconst context = parts.map((p, i) => 'Sub-answer ' + (i + 1) + ': ' + p).join('\\n\\n');\nreturn [{ json: { context, sources } }];"
+        },
+        "id": "33bfd247-b865-49e9-a914-e29ef8687363",
+        "name": "Aggregate",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2208,
+          512
+        ]
+      },
+      {
+        "parameters": {
+          "model": "gemma4:e2b",
+          "options": {
+            "numCtx": 8192
+          }
+        },
+        "id": "11400e2d-9f06-48fc-9d5a-bef2fb5123fc",
+        "name": "Synth Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+        "typeVersion": 1,
+        "position": [
+          2560,
+          848
+        ],
+        "credentials": {
+          "ollamaApi": {
+            "id": "Zl9lspYFi45GrFwM",
+            "name": "Ollama account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $('Length Gate').item.json.message }}",
+          "options": {
+            "systemMessage": "=You are answering from the user's personal notes. Combine the sub-answers below into ONE clear, coherent answer to the user's question. Use ONLY the sub-answers; if they do not cover something, say what is missing.\n\nSub-answers:\n{{ $json.context }}",
+            "enableStreaming": false
+          }
+        },
+        "id": "e74e5209-8b4e-4958-9371-7364b9e8a1b8",
+        "name": "Synthesize",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          2592,
+          624
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "let reply = ($input.first().json.output || '').toString();\nreply = reply.replace(/<think>[\\s\\S]*?<\\/think>/gi, '').replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi, '').replace(/<\\|?\\/?think\\|?>/gi, '').trim();\nconst sources = $('Aggregate').item.json.sources || [];\nreturn [{ json: { reply, mode: 'read', sources, draft: null } }];"
+        },
+        "id": "d6a7c025-8b2b-472f-9b7f-abfc928fe242",
+        "name": "Assemble Read D",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2976,
+          624
+        ]
+      }
+    ],
+    "connections": {
+      "Chat Webhook": {
+        "main": [
+          [
+            {
+              "node": "Normalize Request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Request": {
+        "main": [
+          [
+            {
+              "node": "Route By Mode",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Route By Mode": {
+        "main": [
+          [
+            {
+              "node": "Length Gate",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Draft Note",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Draft Note": {
+        "main": [
+          [
+            {
+              "node": "Assemble Write Draft",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Ollama Write Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Draft Note",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Assemble Write Draft": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Length Gate": {
+        "main": [
+          [
+            {
+              "node": "Read Path",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read Path": {
+        "main": [
+          [
+            {
+              "node": "Prep Query",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Decompose L1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prep Query": {
+        "main": [
+          [
+            {
+              "node": "Execute Retrieval",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execute Retrieval": {
+        "main": [
+          [
+            {
+              "node": "Compose Answer",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Ollama Compose Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Compose Answer",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compose Answer": {
+        "main": [
+          [
+            {
+              "node": "Assemble Read",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Assemble Read": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "L1 Decompose Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Decompose L1",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Decompose L1": {
+        "main": [
+          [
+            {
+              "node": "Parse L1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse L1": {
+        "main": [
+          [
+            {
+              "node": "Loop L1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop L1": {
+        "main": [
+          [
+            {
+              "node": "Aggregate",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Prep B Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prep B Input": {
+        "main": [
+          [
+            {
+              "node": "Execute B",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execute B": {
+        "main": [
+          [
+            {
+              "node": "Loop L1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Aggregate": {
+        "main": [
+          [
+            {
+              "node": "Synthesize",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Synth Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Synthesize",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Synthesize": {
+        "main": [
+          [
+            {
+              "node": "Assemble Read D",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Assemble Read D": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": true,
+      "binaryMode": "separate"
+    },
+    "staticData": null,
+    "meta": {
+      "aiBuilderAssisted": true,
+      "builderVariant": "mcp"
+    },
+    "nodeGroups": [],
+    "pinData": {},
+    "versionId": "7ce8020e-5983-420b-9e5f-ce997a7190c2",
+    "activeVersionId": "7ce8020e-5983-420b-9e5f-ce997a7190c2",
+    "versionCounter": 42,
+    "triggerCount": 1,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-07-04T06:33:35.238Z",
+        "createdAt": "2026-07-04T06:33:35.238Z",
+        "role": "workflow:owner",
+        "workflowId": "esKtUJ1YYfLlyOAT",
+        "projectId": "S86c7EPeVU37mKZK",
+        "project": {
+          "updatedAt": "2026-06-16T07:25:59.747Z",
+          "createdAt": "2026-06-16T07:24:59.347Z",
+          "id": "S86c7EPeVU37mKZK",
+          "name": "Sanjith Saravanan <sanjay200617@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "433c1b86-b399-43fd-ad66-a983d5a77276"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": null,
+      "description": null
+    }
+  }
+]

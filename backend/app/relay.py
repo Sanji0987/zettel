@@ -42,7 +42,9 @@ async def chat(message: str, mode: str, history: list[dict]) -> dict:
     """Relay one chat turn to the n8n webhook, or return a mock if unwired.
 
     mode is the explicit user read/write toggle — passed through untouched, never
-    inferred here. Response shape is always {reply, mode, sources}.
+    inferred here. Response shape is always {reply, mode, sources, draft}, where
+    draft is {title, text} in write mode (an edit-gate preview, not yet saved) or
+    None in read mode.
     """
     if not N8N_CHAT_WEBHOOK:
         # TEMPORARY: n8n brain not built yet. Lets the chat UI round-trip before the
@@ -51,6 +53,7 @@ async def chat(message: str, mode: str, history: list[dict]) -> dict:
             "reply": f"[mock] n8n not wired. echo: {message}",
             "mode": mode,
             "sources": [],
+            "draft": None,
         }
 
     payload = {"message": message, "mode": mode, "history": history}
@@ -62,4 +65,5 @@ async def chat(message: str, mode: str, history: list[dict]) -> dict:
         "reply": data.get("reply", ""),
         "mode": data.get("mode", mode),
         "sources": data.get("sources", []),
+        "draft": data.get("draft"),  # {title, text} in write mode, else None
     }
