@@ -95,17 +95,6 @@ def cognee_status() -> dict:
     return {"configured": cognee_client.is_configured()}
 
 
-@app.get("/api/cognee/debug")
-async def cognee_debug() -> dict:
-    """Throwaway probe — dumps whether config is present and the base URL host."""
-    return {
-        "configured": cognee_client.is_configured(),
-        "base_url_set": bool(cognee_client.BASE_URL),
-        "tenant_set": bool(cognee_client.TENANT_ID),
-        "key_set": bool(cognee_client.API_KEY),
-    }
-
-
 @app.post("/api/notes/{note_id}/ingest")
 async def ingest_note(note_id: int) -> dict:
     """Push one note's text to Cognee."""
