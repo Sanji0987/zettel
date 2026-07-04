@@ -132,6 +132,7 @@ async def ingest_note(note_id: int) -> dict:
         await cognee_client.cognify()
     except cognee_client.CogneeError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    db.clear_pending_ingest(note_id)
     return {"ingested": note_id}
 
 
@@ -144,6 +145,23 @@ async def search(body: SearchIn) -> dict:
     except cognee_client.CogneeError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"query": body.query, "mode": body.mode, "results": result}
+
+
+# ---- UI state persistence (SQLite settings table) ----------------------
+
+class SettingIn(BaseModel):
+    value: str = ""
+
+
+@app.get("/api/settings/{key}")
+def read_setting(key: str, default: str = "") -> dict:
+    return {"key": key, "value": db.get_setting(key, default)}
+
+
+@app.post("/api/settings/{key}")
+def write_setting(key: str, body: SettingIn) -> dict:
+    db.set_setting(key, body.value)
+    return {"key": key, "value": body.value}
 
 
 @app.get("/api/cognee/active")

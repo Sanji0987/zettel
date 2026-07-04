@@ -75,9 +75,10 @@ def _row_to_note(row: sqlite3.Row) -> dict:
 def create_note(title: str, text: str, label: str = "", references: str = "") -> dict:
     ts = _now()
     with get_conn() as conn:
+        # New note starts pending_ingest=1: it isn't in the graph until ingested/rebuilt.
         cur = conn.execute(
-            """INSERT INTO notes (title, text, label, references_, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO notes (title, text, label, references_, pending_ingest, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 1, ?, ?)""",
             (title, text, label, references, ts, ts),
         )
         note_id = cur.lastrowid
@@ -102,14 +103,21 @@ def update_note(note_id: int, title: str, text: str, label: str, references: str
         exists = conn.execute("SELECT 1 FROM notes WHERE id = ?", (note_id,)).fetchone()
         if not exists:
             return None
+        # Edited content is out of sync with the graph -> mark pending again.
         conn.execute(
             """UPDATE notes
-               SET title = ?, text = ?, label = ?, references_ = ?, updated_at = ?
+               SET title = ?, text = ?, label = ?, references_ = ?, pending_ingest = 1, updated_at = ?
                WHERE id = ?""",
             (title, text, label, references, _now(), note_id),
         )
         row = conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
         return _row_to_note(row)
+
+
+def clear_pending_ingest(note_id: int) -> None:
+    """Mark a note as ingested (called after a successful Cognee add+cognify)."""
+    with get_conn() as conn:
+        conn.execute("UPDATE notes SET pending_ingest = 0 WHERE id = ?", (note_id,))
 
 
 def delete_note(note_id: int) -> bool:
@@ -122,7 +130,8 @@ def import_notes(items: list[dict]) -> int:
     """Bulk-insert notes from a vault import. Returns the count actually inserted.
 
     Skips exact duplicates (same title AND text) — both against existing rows and
-    within the batch.
+    within the batch. Imported notes get pending_ingest=1 so they flow into the
+    next Cognee rebuild.
     """
     ts = _now()
     inserted = 0
@@ -138,8 +147,8 @@ def import_notes(items: list[dict]) -> int:
             if key in seen:
                 continue
             conn.execute(
-                """INSERT INTO notes (title, text, label, references_, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO notes (title, text, label, references_, pending_ingest, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 1, ?, ?)""",
                 (title, text, it.get("label", "") or "", it.get("references", "") or "", ts, ts),
             )
             seen.add(key)

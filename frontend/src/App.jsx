@@ -9,6 +9,15 @@ const EMPTY = { title: "", text: "", label: "", references: "" };
 // fall back to a multi-file <input> for import and a .zip download for export.
 const SUPPORTS_FS = typeof window !== "undefined" && "showDirectoryPicker" in window;
 
+// Best-effort UI-state persistence (SQLite settings table).
+function apiSetting(key, value) {
+  fetch(`${API}/settings/${encodeURIComponent(key)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: String(value) }),
+  });
+}
+
 export default function App() {
   const [notes, setNotes] = useState([]);
   const [selectedId, setSelectedId] = useState(null); // null = nothing, "new" = draft
@@ -19,6 +28,7 @@ export default function App() {
 
   const dirHandleRef = useRef(null); // set once a directory is picked
   const fileInputRef = useRef(null); // fallback <input type=file>
+  const textRef = useRef(null); // editor textarea (for cursor restore)
 
   const loadNotes = useCallback(async () => {
     try {
@@ -37,6 +47,24 @@ export default function App() {
     loadNotes();
   }, [loadNotes]);
 
+  // Restore the last open note (persisted in SQLite settings) once notes load.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || loading) return;
+    restoredRef.current = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API}/settings/last_open_note_id`);
+        const { value } = await res.json();
+        const id = parseInt(value, 10);
+        const n = notes.find((x) => x.id === id);
+        if (n) openNote(n);
+      } catch {
+        /* ignore — nothing to restore */
+      }
+    })();
+  }, [loading, notes]);
+
   function newNote() {
     setSelectedId("new");
     setDraft(EMPTY);
@@ -45,7 +73,22 @@ export default function App() {
   function openNote(n) {
     setSelectedId(n.id);
     setDraft({ title: n.title, text: n.text, label: n.label, references: n.references });
+    apiSetting("last_open_note_id", n.id); // persist across reloads (SQLite)
   }
+
+  // Cursor position is ephemeral / per-browser -> localStorage, not SQLite.
+  function saveCursor() {
+    if (selectedId === null || selectedId === "new" || !textRef.current) return;
+    localStorage.setItem(`cursor:${selectedId}`, String(textRef.current.selectionStart));
+  }
+  useEffect(() => {
+    if (selectedId === null || selectedId === "new" || !textRef.current) return;
+    const pos = parseInt(localStorage.getItem(`cursor:${selectedId}`) || "", 10);
+    if (!Number.isNaN(pos)) {
+      textRef.current.focus();
+      textRef.current.setSelectionRange(pos, pos);
+    }
+  }, [selectedId]);
 
   async function save() {
     try {
@@ -62,6 +105,7 @@ export default function App() {
       const saved = await res.json();
       await loadNotes();
       setSelectedId(saved.id);
+      apiSetting("last_open_note_id", saved.id);
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -218,6 +262,7 @@ export default function App() {
               <div className="note-title">{n.title || "(untitled)"}</div>
               <div className="note-preview">{n.text.slice(0, 60)}</div>
               {n.label && <span className="tag">{n.label}</span>}
+              {n.pending_ingest && <span className="tag pending">pending</span>}
             </li>
           ))}
           {!loading && notes.length === 0 && <p className="muted">No notes yet.</p>}
@@ -238,10 +283,12 @@ export default function App() {
               onChange={(e) => setDraft({ ...draft, title: e.target.value })}
             />
             <textarea
+              ref={textRef}
               className="text-input"
               placeholder="Write your atomic note…"
               value={draft.text}
               onChange={(e) => setDraft({ ...draft, text: e.target.value })}
+              onSelect={saveCursor}
             />
             <div className="meta-row">
               <input
