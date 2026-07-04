@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    container_name: zettelkeistan
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./.env          # COGNEE_BASE_URL / COGNEE_TENANT_ID / COGNEE_API_KEY
+    volumes:
+      - zk_data:/data
+    restart: unless-stopped
+
+volumes:
+  zk_data:
