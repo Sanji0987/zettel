@@ -30,6 +30,14 @@ def _headers() -> dict:
     }
 
 
+def _auth_headers() -> dict:
+    # Auth only — no Content-Type, so httpx can set the multipart boundary itself.
+    return {
+        "X-Api-Key": API_KEY,
+        "X-Tenant-Id": TENANT_ID,
+    }
+
+
 def is_configured() -> bool:
     return bool(BASE_URL and TENANT_ID and API_KEY and "REPLACE" not in API_KEY)
 
@@ -52,12 +60,18 @@ async def ensure_dataset(dataset: str = DEFAULT_DATASET) -> dict:
 
 
 async def add(text: str, dataset: str = DEFAULT_DATASET) -> dict:
+    # /add is a multipart file-upload endpoint (per the live OpenAPI schema): the note
+    # goes in the `data` file field and the dataset in the `datasetName` form field.
+    # JSON is rejected with a 409. Auth-only headers so httpx sets the boundary itself.
     await ensure_dataset(dataset)
+    files = [("data", ("note.txt", text.encode("utf-8"), "text/plain"))]
+    data = {"datasetName": dataset}
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
         r = await client.post(
             f"{BASE_URL}/api/v1/add",
-            json={"data": [text], "datasetName": dataset},
-            headers=_headers(),
+            files=files,
+            data=data,
+            headers=_auth_headers(),
         )
     if r.status_code >= 400:
         raise CogneeError(f"add failed ({r.status_code}): {r.text[:300]}")
