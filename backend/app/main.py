@@ -61,6 +61,29 @@ def create_note(note: NoteIn) -> dict:
     return db.create_note(note.title, note.text, note.label, note.references)
 
 
+class NoteImport(BaseModel):
+    title: str = Field(default="", max_length=500)
+    text: str = Field(default="")
+    label: str = Field(default="", max_length=200)
+    references: str = Field(default="")
+
+
+@app.post("/api/notes/import")
+def import_notes(items: list[NoteImport]) -> dict:
+    """Bulk-import notes from a vault (files -> SQLite). Skips exact dup title+text.
+
+    SQLite stays the source of truth; the vault folder is a sync checkpoint.
+    """
+    count = db.import_notes([i.model_dump() for i in items])
+    return {"imported": count}
+
+
+@app.get("/api/notes/export", response_model=list[NoteOut])
+def export_notes() -> list[dict]:
+    """All notes as JSON (SQLite -> files). The frontend turns these into .md files."""
+    return db.list_notes()
+
+
 @app.get("/api/notes/{note_id}", response_model=NoteOut)
 def get_note(note_id: int) -> dict:
     n = db.get_note(note_id)

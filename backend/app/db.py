@@ -118,6 +118,35 @@ def delete_note(note_id: int) -> bool:
         return cur.rowcount > 0
 
 
+def import_notes(items: list[dict]) -> int:
+    """Bulk-insert notes from a vault import. Returns the count actually inserted.
+
+    Skips exact duplicates (same title AND text) — both against existing rows and
+    within the batch.
+    """
+    ts = _now()
+    inserted = 0
+    with get_conn() as conn:
+        seen = {
+            (r["title"], r["text"])
+            for r in conn.execute("SELECT title, text FROM notes").fetchall()
+        }
+        for it in items:
+            title = it.get("title", "") or ""
+            text = it.get("text", "") or ""
+            key = (title, text)
+            if key in seen:
+                continue
+            conn.execute(
+                """INSERT INTO notes (title, text, label, references_, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (title, text, it.get("label", "") or "", it.get("references", "") or "", ts, ts),
+            )
+            seen.add(key)
+            inserted += 1
+    return inserted
+
+
 # ---- settings (key/value) ------------------------------------------------
 # Small typed accessors over the existing `settings` table. Used for the
 # Cognee "active_dataset" pointer (which graph the app currently targets).
