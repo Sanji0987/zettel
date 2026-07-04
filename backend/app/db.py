@@ -116,3 +116,23 @@ def delete_note(note_id: int) -> bool:
     with get_conn() as conn:
         cur = conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
         return cur.rowcount > 0
+
+
+# ---- settings (key/value) ------------------------------------------------
+# Small typed accessors over the existing `settings` table. Used for the
+# Cognee "active_dataset" pointer (which graph the app currently targets).
+
+
+def get_setting(key: str, default: str = "") -> str:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row is not None else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO settings (key, value) VALUES (?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            (key, value),
+        )

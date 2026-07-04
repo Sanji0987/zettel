@@ -3,17 +3,38 @@
 Config from env (never hardcoded):
   COGNEE_BASE_URL   https://tenant-xxxx.aws.cognee.ai
   COGNEE_TENANT_ID  tenant UUID
-  COGNEE_API_KEY    your key
+  COGNEE_API_KEY    your (rotated) key
 
 Cloud endpoints. Auth via X-Api-Key + X-Tenant-Id.
+  POST /api/v1/datasets   JSON {"name"}                            -> create-or-return
+  POST /api/v1/add        multipart: file field `data` + form `datasetName`
+  POST /api/v1/cognify    JSON {"datasets": [name]}
+  POST /api/v1/search     JSON {"query", "search_type", "datasets": [name]}
+  DELETE /api/v1/datasets/{id}
 """
 import os
 import httpx
+
+from . import db
 
 BASE_URL = os.environ.get("COGNEE_BASE_URL", "").rstrip("/")
 TENANT_ID = os.environ.get("COGNEE_TENANT_ID", "")
 API_KEY = os.environ.get("COGNEE_API_KEY", "")
 DEFAULT_DATASET = os.environ.get("COGNEE_DATASET", "zettelkeistan")
+
+# Key in the SQLite `settings` table holding the currently-active dataset name.
+ACTIVE_DATASET_KEY = "active_dataset"
+
+
+def active_dataset() -> str:
+    """The dataset the app currently targets (the cutover pointer in SQLite).
+
+    Falls back to DEFAULT_DATASET when unset. add/cognify/search resolve their
+    dataset from here so a rebuild cutover (set via db.set_setting) is picked up
+    on the very next call, with no restart.
+    """
+    return db.get_setting(ACTIVE_DATASET_KEY, DEFAULT_DATASET)
+
 
 # UI toggle -> Cognee search_type
 SEARCH_TYPES = {
@@ -47,7 +68,7 @@ class CogneeError(RuntimeError):
 
 
 async def ensure_dataset(dataset: str = DEFAULT_DATASET) -> dict:
-    """Create the dataset (or return existing). Idempotent."""
+    """Create the dataset (or return existing). Idempotent. Returns dataset dict with id."""
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         r = await client.post(
             f"{BASE_URL}/api/v1/datasets",
@@ -81,10 +102,11 @@ async def delete_dataset(dataset_id: str) -> dict:
     return {"status": r.status_code, "text": r.text[:600]}
 
 
-async def add(text: str, dataset: str = DEFAULT_DATASET) -> dict:
+async def add(text: str, dataset: str | None = None) -> dict:
+    dataset = dataset or active_dataset()
     # /add is a multipart file-upload endpoint (per the live OpenAPI schema): the note
     # goes in the `data` file field and the dataset in the `datasetName` form field.
-    # JSON is rejected with a 409. Auth-only headers so httpx sets the boundary itself.
+    # JSON is rejected. Auth-only headers so httpx sets the multipart boundary itself.
     await ensure_dataset(dataset)
     files = [("data", ("note.txt", text.encode("utf-8"), "text/plain"))]
     data = {"datasetName": dataset}
@@ -100,7 +122,8 @@ async def add(text: str, dataset: str = DEFAULT_DATASET) -> dict:
     return r.json() if r.content else {}
 
 
-async def cognify(dataset: str = DEFAULT_DATASET) -> dict:
+async def cognify(dataset: str | None = None) -> dict:
+    dataset = dataset or active_dataset()
     async with httpx.AsyncClient(timeout=600, follow_redirects=True) as client:
         r = await client.post(
             f"{BASE_URL}/api/v1/cognify",
@@ -112,7 +135,8 @@ async def cognify(dataset: str = DEFAULT_DATASET) -> dict:
     return r.json() if r.content else {}
 
 
-async def search(query: str, mode: str = "quick", dataset: str = DEFAULT_DATASET) -> dict:
+async def search(query: str, mode: str = "quick", dataset: str | None = None) -> dict:
+    dataset = dataset or active_dataset()
     search_type = SEARCH_TYPES.get(mode, SEARCH_TYPES["quick"])
     async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
         r = await client.post(

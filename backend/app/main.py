@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from . import cognee_client
+from . import rebuild
 
 
 app = FastAPI(title="Zettelkeistan API", version="0.1.0")
@@ -131,6 +132,27 @@ async def search(body: SearchIn) -> dict:
     except cognee_client.CogneeError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"query": body.query, "mode": body.mode, "results": result}
+
+
+@app.get("/api/cognee/active")
+def active_dataset() -> dict:
+    """Which Cognee graph the app currently targets (the cutover pointer)."""
+    return {"active_dataset": cognee_client.active_dataset()}
+
+
+@app.post("/api/cognee/rebuild")
+async def rebuild_dataset(dry_run: bool = False) -> dict:
+    """Rebuild the graph from SQLite under a fresh name and cut over on success.
+
+    Thin delegate: the pointer read/write and the heavy build loop live in
+    rebuild_dataset() (liftable to n8n later). Pass ?dry_run=true to preview.
+    """
+    if not cognee_client.is_configured():
+        raise HTTPException(status_code=503, detail="Cognee not configured (.env)")
+    result = await rebuild.rebuild_dataset(dry_run=dry_run)
+    if result.get("ok") is False:
+        raise HTTPException(status_code=502, detail=result.get("error", "rebuild failed"))
+    return result
 
 
 # ---- Static React (single-container prod). Mounted only if the build exists.
