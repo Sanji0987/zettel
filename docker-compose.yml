@@ -3,7 +3,8 @@ services:
     build: .
     container_name: zettelkeistan
     ports:
-      - "8000:8000"
+      # Loopback only — the API has no auth; don't expose it to the LAN.
+      - "127.0.0.1:8000:8000"
     env_file:
       - ./.env          # COGNEE_BASE_URL / COGNEE_TENANT_ID / COGNEE_API_KEY
     volumes:

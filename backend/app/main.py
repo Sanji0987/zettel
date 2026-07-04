@@ -5,6 +5,7 @@ from /app/static. In dev (two-server), CORS is open so Vite on :5173
 can call the API on :8000.
 """
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,19 +18,26 @@ from . import cognee_client
 from . import rebuild
 
 
-app = FastAPI(title="Zettelkeistan API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_db()
+    yield
 
+
+app = FastAPI(title="Zettelkeistan API", version="0.1.0", lifespan=lifespan)
+
+# The prod build serves the frontend same-origin, so no CORS is needed there. This
+# only opens the API to the Vite dev server. Scoped to explicit localhost dev origins
+# (NOT "*") so arbitrary websites can't read your notes from your browser. Override
+# with ZK_CORS_ORIGINS (comma-separated) if you run the dev server elsewhere.
+_default_dev_origins = "http://localhost:5173,http://127.0.0.1:5173"
+CORS_ORIGINS = [o.strip() for o in os.environ.get("ZK_CORS_ORIGINS", _default_dev_origins).split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def startup() -> None:
-    db.init_db()
 
 
 class NoteIn(BaseModel):
@@ -62,10 +70,12 @@ def create_note(note: NoteIn) -> dict:
 
 
 class NoteImport(BaseModel):
-    title: str = Field(default="", max_length=500)
-    text: str = Field(default="")
-    label: str = Field(default="", max_length=200)
-    references: str = Field(default="")
+    # Lenient by design: import shouldn't reject the whole batch over one long
+    # filename/title. db.import_notes clamps title/label to the stored limits.
+    title: str = ""
+    text: str = ""
+    label: str = ""
+    references: str = ""
 
 
 @app.post("/api/notes/import")
@@ -149,17 +159,27 @@ async def search(body: SearchIn) -> dict:
 
 # ---- UI state persistence (SQLite settings table) ----------------------
 
+# Only these keys are readable/writable via the public settings API. This keeps the
+# frontend from clobbering internal pointers like "active_dataset" (the Cognee cutover
+# pointer), which must only ever be moved by a successful rebuild.
+ALLOWED_SETTINGS = {"last_open_note_id", "active_vault"}
+
+
 class SettingIn(BaseModel):
     value: str = ""
 
 
 @app.get("/api/settings/{key}")
 def read_setting(key: str, default: str = "") -> dict:
+    if key not in ALLOWED_SETTINGS:
+        raise HTTPException(status_code=404, detail="Unknown setting")
     return {"key": key, "value": db.get_setting(key, default)}
 
 
 @app.post("/api/settings/{key}")
 def write_setting(key: str, body: SettingIn) -> dict:
+    if key not in ALLOWED_SETTINGS:
+        raise HTTPException(status_code=403, detail="Setting is not writable")
     db.set_setting(key, body.value)
     return {"key": key, "value": body.value}
 

@@ -72,6 +72,11 @@ def _row_to_note(row: sqlite3.Row) -> dict:
     }
 
 
+# Stored-column limits (mirrored by the API validation for create/update).
+TITLE_MAX = 500
+LABEL_MAX = 200
+
+
 def create_note(title: str, text: str, label: str = "", references: str = "") -> dict:
     ts = _now()
     with get_conn() as conn:
@@ -141,7 +146,7 @@ def import_notes(items: list[dict]) -> int:
             for r in conn.execute("SELECT title, text FROM notes").fetchall()
         }
         for it in items:
-            title = it.get("title", "") or ""
+            title = (it.get("title", "") or "")[:TITLE_MAX]
             text = it.get("text", "") or ""
             key = (title, text)
             if key in seen:
@@ -149,7 +154,7 @@ def import_notes(items: list[dict]) -> int:
             conn.execute(
                 """INSERT INTO notes (title, text, label, references_, pending_ingest, created_at, updated_at)
                    VALUES (?, ?, ?, ?, 1, ?, ?)""",
-                (title, text, it.get("label", "") or "", it.get("references", "") or "", ts, ts),
+                (title, text, (it.get("label", "") or "")[:LABEL_MAX], it.get("references", "") or "", ts, ts),
             )
             seen.add(key)
             inserted += 1

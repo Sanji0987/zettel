@@ -25,5 +25,12 @@ COPY --from=frontend /frontend/dist ./static
 ENV ZK_DB_PATH=/data/zettelkeistan.db
 ENV ZK_STATIC_DIR=/app/static
 
+# Run as a non-root user. /data is a mounted volume, so make it writable by that
+# user (the app also creates the DB dir at startup).
+RUN useradd --uid 10001 --create-home appuser \
+    && mkdir -p /data \
+    && chown -R appuser:appuser /data /app
+USER appuser
+
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

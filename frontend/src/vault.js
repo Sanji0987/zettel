@@ -12,6 +12,24 @@ export function filenameFor(note) {
   return `${base}.md`;
 }
 
+// Assign a unique .md filename to every note in a set. Two notes with the same title
+// (e.g. two "Test" notes) would otherwise both map to Test.md and overwrite each other
+// on export — so collisions get a -2, -3, ... suffix. Returns [{ note, name }].
+export function uniqueFilenames(notes) {
+  const used = new Set();
+  return notes.map((note) => {
+    const base = filenameFor(note).replace(/\.md$/i, "");
+    let name = `${base}.md`;
+    let i = 2;
+    while (used.has(name.toLowerCase())) {
+      name = `${base}-${i}.md`;
+      i++;
+    }
+    used.add(name.toLowerCase());
+    return { note, name };
+  });
+}
+
 export function noteToMarkdown(note) {
   const label = (note.label || "").trim();
   const refs = (note.references || "").trim();

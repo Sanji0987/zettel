@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { filenameFor, noteToMarkdown, parseMarkdown, makeZip } from "./vault";
+import { uniqueFilenames, noteToMarkdown, parseMarkdown, makeZip } from "./vault";
 
 const API = "/api";
 
@@ -9,13 +9,13 @@ const EMPTY = { title: "", text: "", label: "", references: "" };
 // fall back to a multi-file <input> for import and a .zip download for export.
 const SUPPORTS_FS = typeof window !== "undefined" && "showDirectoryPicker" in window;
 
-// Best-effort UI-state persistence (SQLite settings table).
+// Best-effort UI-state persistence; never let a failed save break the editor flow.
 function apiSetting(key, value) {
   fetch(`${API}/settings/${encodeURIComponent(key)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value: String(value) }),
-  });
+  }).catch(() => {});
 }
 
 export default function App() {
@@ -195,6 +195,7 @@ export default function App() {
     setError(null);
     try {
       const all = await (await fetch(`${API}/notes/export`)).json();
+      const files = uniqueFilenames(all); // [{ note, name }] — collision-free filenames
       if (dirHandleRef.current && SUPPORTS_FS) {
         const opts = { mode: "readwrite" };
         const h = dirHandleRef.current;
@@ -202,8 +203,8 @@ export default function App() {
           if ((await h.requestPermission(opts)) !== "granted")
             throw new Error("Folder write permission denied");
         }
-        for (const note of all) {
-          const fh = await h.getFileHandle(filenameFor(note), { create: true });
+        for (const { note, name } of files) {
+          const fh = await h.getFileHandle(name, { create: true });
           const w = await fh.createWritable();
           await w.write(noteToMarkdown(note));
           await w.close();
@@ -212,7 +213,7 @@ export default function App() {
       } else {
         const enc = new TextEncoder();
         const blob = makeZip(
-          all.map((note) => ({ name: filenameFor(note), data: enc.encode(noteToMarkdown(note)) }))
+          files.map(({ note, name }) => ({ name, data: enc.encode(noteToMarkdown(note)) }))
         );
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
