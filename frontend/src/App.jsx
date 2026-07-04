@@ -26,6 +26,15 @@ export default function App() {
   const [error, setError] = useState(null);
   const [vaultMsg, setVaultMsg] = useState(null);
 
+  // ---- Chat state ----
+  const [chatLog, setChatLog] = useState([]); // [{role:"user"|"assistant", content, sources?}]
+  const [chatInput, setChatInput] = useState("");
+  const [chatMode, setChatMode] = useState("read"); // explicit user toggle: read | write
+  const [chatSending, setChatSending] = useState(false);
+  const [ollamaOk, setOllamaOk] = useState(null); // null = unknown, then bool
+  const [cogneeOk, setCogneeOk] = useState(null);
+  const chatLogRef = useRef(null);
+
   const dirHandleRef = useRef(null); // set once a directory is picked
   const fileInputRef = useRef(null); // fallback <input type=file>
   const textRef = useRef(null); // editor textarea (for cursor restore)
@@ -228,6 +237,54 @@ export default function App() {
     }
   }
 
+  // ---- Chat ---------------------------------------------------------------
+
+  // On load, probe backend integrations so the UI can enable/disable chat.
+  useEffect(() => {
+    (async () => {
+      try {
+        const s = await (await fetch(`${API}/ollama/status`)).json();
+        setOllamaOk(!!s.reachable);
+      } catch {
+        setOllamaOk(false);
+      }
+      try {
+        const s = await (await fetch(`${API}/cognee/status`)).json();
+        setCogneeOk(!!s.configured);
+      } catch {
+        setCogneeOk(false);
+      }
+    })();
+  }, []);
+
+  // Keep the chat log scrolled to the newest message.
+  useEffect(() => {
+    if (chatLogRef.current) chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight;
+  }, [chatLog, chatSending]);
+
+  async function sendChat() {
+    const message = chatInput.trim();
+    if (!message || chatSending) return;
+    const history = chatLog.map(({ role, content }) => ({ role, content }));
+    setChatLog((log) => [...log, { role: "user", content: message }]);
+    setChatInput("");
+    setChatSending(true);
+    try {
+      const res = await fetch(`${API}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, mode: chatMode, history }),
+      });
+      if (!res.ok) throw new Error(`Chat failed (${res.status})`);
+      const { reply, sources } = await res.json();
+      setChatLog((log) => [...log, { role: "assistant", content: reply, sources: sources || [] }]);
+    } catch (e) {
+      setChatLog((log) => [...log, { role: "assistant", content: `⚠ ${e.message}`, sources: [] }]);
+    } finally {
+      setChatSending(false);
+    }
+  }
+
   const editing = selectedId !== null;
 
   return (
@@ -314,6 +371,77 @@ export default function App() {
           </>
         )}
       </main>
+
+      <section className="chat">
+        <div className="chat-head">
+          <div className="chat-head-top">
+            <h2>Chat</h2>
+            <span className="status-dot" title="Ollama container on n8n-net">
+              <span className={`dot ${ollamaOk === null ? "" : ollamaOk ? "on" : "off"}`} />
+              Ollama
+            </span>
+          </div>
+          <div className="segmented" role="tablist" aria-label="Chat mode">
+            <button
+              className={chatMode === "read" ? "active" : ""}
+              onClick={() => setChatMode("read")}
+            >
+              Read
+            </button>
+            <button
+              className={chatMode === "write" ? "active" : ""}
+              onClick={() => setChatMode("write")}
+            >
+              Write
+            </button>
+          </div>
+        </div>
+
+        <div className="chat-log" ref={chatLogRef}>
+          {chatLog.length === 0 && (
+            <p className="muted">Ask about your notes ({chatMode} mode).</p>
+          )}
+          {chatLog.map((m, i) => (
+            <div key={i} className={`bubble ${m.role}`}>
+              {m.content}
+              {m.sources && m.sources.length > 0 && (
+                <div className="sources">
+                  Sources:{" "}
+                  {m.sources.map((s, j) => (
+                    <span key={j}>
+                      {j > 0 && ", "}
+                      {typeof s === "string" ? s : s.url ? <a href={s.url}>{s.title || s.url}</a> : JSON.stringify(s)}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {chatSending && <div className="bubble assistant muted">…</div>}
+        </div>
+
+        {ollamaOk === false && (
+          <p className="chat-hint error">
+            Ollama unreachable. Run <code>docker start ollama</code> and reload.
+          </p>
+        )}
+        <div className="chat-input">
+          <input
+            placeholder={ollamaOk === false ? "Chat disabled — Ollama offline" : "Message…"}
+            value={chatInput}
+            disabled={ollamaOk === false || chatSending}
+            onChange={(e) => setChatInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && sendChat()}
+          />
+          <button
+            className="btn-primary"
+            onClick={sendChat}
+            disabled={ollamaOk === false || chatSending || !chatInput.trim()}
+          >
+            Send
+          </button>
+        </div>
+      </section>
     </div>
   );
 }

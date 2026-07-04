@@ -1,4 +1,4 @@
-"""FastAPI backend — read/write path over SQLite, plus Cognee ingest/search.
+"""FastAPI backend — read/write path over SQLite, plus Cognee rebuild cutover.
 
 In the single-container build, this also serves the compiled React app
 from /app/static. In dev (two-server), CORS is open so Vite on :5173
@@ -7,6 +7,7 @@ can call the API on :8000.
 import os
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -16,6 +17,7 @@ from pydantic import BaseModel, Field
 from . import db
 from . import cognee_client
 from . import rebuild
+from . import relay
 
 
 @asynccontextmanager
@@ -82,7 +84,8 @@ class NoteImport(BaseModel):
 def import_notes(items: list[NoteImport]) -> dict:
     """Bulk-import notes from a vault (files -> SQLite). Skips exact dup title+text.
 
-    SQLite stays the source of truth; the vault folder is a sync checkpoint.
+    SQLite stays the source of truth; the vault folder is a sync checkpoint, not a
+    live second source. Imported notes are marked pending_ingest for the next rebuild.
     """
     count = db.import_notes([i.model_dump() for i in items])
     return {"imported": count}
@@ -116,7 +119,7 @@ def delete_note(note_id: int) -> None:
         raise HTTPException(status_code=404, detail="Note not found")
 
 
-# ---- Cognee integration -------------------------------------------------
+# ---- Cognee integration (Phase 2) --------------------------------------
 
 class SearchIn(BaseModel):
     query: str
@@ -130,7 +133,7 @@ def cognee_status() -> dict:
 
 @app.post("/api/notes/{note_id}/ingest")
 async def ingest_note(note_id: int) -> dict:
-    """Push one note's text to Cognee."""
+    """Push one note's text to Cognee, then clear its pending flag."""
     if not cognee_client.is_configured():
         raise HTTPException(status_code=503, detail="Cognee not configured (.env)")
     note = db.get_note(note_id)
@@ -142,19 +145,10 @@ async def ingest_note(note_id: int) -> dict:
         await cognee_client.cognify()
     except cognee_client.CogneeError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    # Clear the pending flag only. (Don't call update_note here — that would bump
+    # updated_at and reshuffle the sidebar as if the note had been edited.)
     db.clear_pending_ingest(note_id)
     return {"ingested": note_id}
-
-
-@app.post("/api/search")
-async def search(body: SearchIn) -> dict:
-    if not cognee_client.is_configured():
-        raise HTTPException(status_code=503, detail="Cognee not configured (.env)")
-    try:
-        result = await cognee_client.search(body.query, body.mode)
-    except cognee_client.CogneeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    return {"query": body.query, "mode": body.mode, "results": result}
 
 
 # ---- UI state persistence (SQLite settings table) ----------------------
@@ -194,8 +188,9 @@ def active_dataset() -> dict:
 async def rebuild_dataset(dry_run: bool = False) -> dict:
     """Rebuild the graph from SQLite under a fresh name and cut over on success.
 
-    Thin delegate: the pointer read/write and the heavy build loop live in
-    rebuild_dataset() (liftable to n8n later). Pass ?dry_run=true to preview.
+    Thin delegate: the pointer read/write lives in rebuild_dataset(), the heavy
+    build loop is isolated there too (liftable to n8n later). Pass ?dry_run=true
+    to preview the new name + note count without calling cognify.
     """
     if not cognee_client.is_configured():
         raise HTTPException(status_code=503, detail="Cognee not configured (.env)")
@@ -203,6 +198,47 @@ async def rebuild_dataset(dry_run: bool = False) -> dict:
     if result.get("ok") is False:
         raise HTTPException(status_code=502, detail=result.get("error", "rebuild failed"))
     return result
+
+
+@app.post("/api/search")
+async def search(body: SearchIn) -> dict:
+    if not cognee_client.is_configured():
+        raise HTTPException(status_code=503, detail="Cognee not configured (.env)")
+    try:
+        result = await cognee_client.search(body.query, body.mode)
+    except cognee_client.CogneeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"query": body.query, "mode": body.mode, "results": result}
+
+
+# ---- Ollama status + chat relay (n8n brain not built yet) ---------------
+
+@app.get("/api/ollama/status")
+async def ollama_status() -> dict:
+    """Whether the existing ollama container is reachable + its pulled models.
+
+    Lists tags only — never invokes a model. Used by the UI to enable/disable chat.
+    """
+    return await relay.ollama_tags()
+
+
+class ChatIn(BaseModel):
+    message: str
+    mode: str = Field(default="read", pattern="^(read|write)$")
+    history: list[dict] = Field(default_factory=list)
+
+
+@app.post("/api/chat")
+async def chat(body: ChatIn) -> dict:
+    """Thin relay to the n8n chat webhook (or a mock until it's wired).
+
+    No AI/Ollama/Cognee logic here — FastAPI just forwards {message, mode, history}
+    and passes {reply, mode, sources} back. mode is the explicit user toggle.
+    """
+    try:
+        return await relay.chat(body.message, body.mode, body.history)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"chat webhook error: {e}")
 
 
 # ---- Static React (single-container prod). Mounted only if the build exists.

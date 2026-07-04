@@ -6,10 +6,24 @@ services:
       # Loopback only — the API has no auth; don't expose it to the LAN.
       - "127.0.0.1:8000:8000"
     env_file:
-      - ./.env          # COGNEE_BASE_URL / COGNEE_TENANT_ID / COGNEE_API_KEY
+      - ./.env          # COGNEE_* + N8N_CHAT_WEBHOOK (see .env.example)
+    environment:
+      # Existing ollama container is reachable by name on n8n-net. Fixed in-network
+      # address, so it's set here rather than depending on .env being filled in.
+      OLLAMA_BASE_URL: http://ollama:11434
     volumes:
       - zk_data:/data
+    # default: this project's own network. n8n-net: the EXISTING external network the
+    # ollama container (and, later, n8n) lives on — lets us reach http://ollama:11434.
+    networks:
+      - default
+      - n8n-net
     restart: unless-stopped
 
 volumes:
   zk_data:
+
+networks:
+  # Owned by another project; we only attach to it. `docker start ollama` first.
+  n8n-net:
+    external: true
