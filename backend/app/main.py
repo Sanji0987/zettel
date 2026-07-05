@@ -140,7 +140,7 @@ async def ingest_note(note_id: int) -> dict:
     note = db.get_note(note_id)
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
-    payload = f"{note['title']}\n\n{note['text']}".strip()
+    payload = cognee_client.note_payload(note)
     try:
         # Chunk (only if large) and add each chunk under node_set "note_<id>", then
         # cognify ONCE. Small notes stay a single chunk.
@@ -333,7 +333,7 @@ async def _do_sync_run() -> dict:
     total_chunks = 0
     failed = 0
     for note in pending:
-        payload = f"{note['title']}\n\n{note['text']}".strip()
+        payload = cognee_client.note_payload(note)
         try:
             if payload:
                 total_chunks += await cognee_client.add_note_chunks(note["id"], payload)

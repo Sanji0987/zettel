@@ -52,11 +52,6 @@ async def _fresh_unused_name(start: str) -> str:
     return name
 
 
-def _note_payload(note: dict) -> str:
-    """Same shape the single-note ingest uses: title + blank line + text."""
-    return f"{note['title']}\n\n{note['text']}".strip()
-
-
 async def _build_graph(new_name: str, notes: list[dict]) -> None:
     """The liftable build loop: create the dataset, add every note, cognify ONCE.
 
@@ -64,11 +59,11 @@ async def _build_graph(new_name: str, notes: list[dict]) -> None:
     the caller can decide NOT to flip the pointer. This is the unit that would move
     to an n8n workflow.
     """
-    await cognee_client.ensure_dataset(new_name)
+    await cognee_client.ensure_dataset(new_name)  # once; per-note adds skip re-ensuring
     for note in notes:
-        payload = _note_payload(note)
+        payload = cognee_client.note_payload(note)
         if payload:
-            await cognee_client.add(payload, dataset=new_name)
+            await cognee_client.add(payload, dataset=new_name, ensure=False)
     await cognee_client.cognify(new_name)  # ONCE — never loop this (costs tokens).
 
 

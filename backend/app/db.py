@@ -92,17 +92,18 @@ def get_conn():
 
 
 def _row_to_note(row: sqlite3.Row) -> dict:
-    keys = row.keys()
+    # sync_status is the single source of truth for a note's ingest state; pending_ingest
+    # is derived from it (True unless the note is fully synced) for the API/frontend.
+    sync_status = row["sync_status"]
     return {
         "id": row["id"],
         "title": row["title"],
         "text": row["text"],
         "label": row["label"],
         "references": row["references_"],
-        "pending_ingest": bool(row["pending_ingest"]),
-        # sync_* may be absent on a row selected before migration in odd cases; default safely.
-        "sync_status": row["sync_status"] if "sync_status" in keys else "pending",
-        "sync_error": row["sync_error"] if "sync_error" in keys else "",
+        "pending_ingest": sync_status != "done",
+        "sync_status": sync_status,
+        "sync_error": row["sync_error"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -149,7 +150,7 @@ def update_note(note_id: int, title: str, text: str, label: str, references: str
         conn.execute(
             """UPDATE notes
                SET title = ?, text = ?, label = ?, references_ = ?,
-                   pending_ingest = 1, sync_status = 'pending', sync_error = '', updated_at = ?
+                   sync_status = 'pending', sync_error = '', updated_at = ?
                WHERE id = ?""",
             (title, text, label, references, _now(), note_id),
         )
@@ -158,12 +159,8 @@ def update_note(note_id: int, title: str, text: str, label: str, references: str
 
 
 def clear_pending_ingest(note_id: int) -> None:
-    """Mark a note as ingested (called after a successful Cognee add+cognify)."""
-    with get_conn() as conn:
-        conn.execute(
-            "UPDATE notes SET pending_ingest = 0, sync_status = 'done', sync_error = '' WHERE id = ?",
-            (note_id,),
-        )
+    """Mark a single note as ingested — the scalar case of mark_done()."""
+    mark_done([note_id])
 
 
 def delete_note(note_id: int) -> bool:
@@ -188,6 +185,18 @@ def delete_note(note_id: int) -> bool:
 # quarantined for user review — never retried blindly, never silently dropped.
 
 
+def _update_by_ids(table: str, set_sql: str, ids: list[int]) -> int:
+    """Batch `UPDATE <table> SET <set_sql> WHERE id IN (...)`. Shared by the mark_* helpers."""
+    if not ids:
+        return 0
+    placeholders = ",".join("?" * len(ids))
+    with get_conn() as conn:
+        cur = conn.execute(
+            f"UPDATE {table} SET {set_sql} WHERE id IN ({placeholders})", tuple(ids)
+        )
+        return cur.rowcount
+
+
 def list_pending(limit: int = 50) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
@@ -198,22 +207,13 @@ def list_pending(limit: int = 50) -> list[dict]:
 
 
 def mark_done(ids: list[int]) -> int:
-    if not ids:
-        return 0
-    placeholders = ",".join("?" * len(ids))
-    with get_conn() as conn:
-        cur = conn.execute(
-            f"UPDATE notes SET sync_status = 'done', pending_ingest = 0, sync_error = '' "
-            f"WHERE id IN ({placeholders})",
-            tuple(ids),
-        )
-        return cur.rowcount
+    return _update_by_ids("notes", "sync_status = 'done', sync_error = ''", ids)
 
 
 def mark_failed(note_id: int, reason: str) -> None:
     with get_conn() as conn:
         conn.execute(
-            "UPDATE notes SET sync_status = 'failed', sync_error = ?, pending_ingest = 1 WHERE id = ?",
+            "UPDATE notes SET sync_status = 'failed', sync_error = ? WHERE id = ?",
             ((reason or "")[:1000], note_id),
         )
 
@@ -231,7 +231,7 @@ def requeue_failed(note_id: int) -> bool:
     the note is currently failed."""
     with get_conn() as conn:
         cur = conn.execute(
-            "UPDATE notes SET sync_status = 'pending', sync_error = '', pending_ingest = 1 "
+            "UPDATE notes SET sync_status = 'pending', sync_error = '' "
             "WHERE id = ? AND sync_status = 'failed'",
             (note_id,),
         )
@@ -251,15 +251,7 @@ def list_pending_removals(limit: int = 50) -> list[dict]:
 
 
 def mark_removals_done(ids: list[int]) -> int:
-    if not ids:
-        return 0
-    placeholders = ",".join("?" * len(ids))
-    with get_conn() as conn:
-        cur = conn.execute(
-            f"UPDATE note_removals SET status = 'done' WHERE id IN ({placeholders})",
-            tuple(ids),
-        )
-        return cur.rowcount
+    return _update_by_ids("note_removals", "status = 'done'", ids)
 
 
 def sync_counts() -> dict:

@@ -103,12 +103,14 @@ async def delete_dataset(dataset_id: str) -> dict:
     return {"status": r.status_code, "text": r.text[:600]}
 
 
-async def add(text: str, dataset: str | None = None, node_set: list[str] | None = None) -> dict:
+async def add(text: str, dataset: str | None = None, node_set: list[str] | None = None,
+              ensure: bool = True) -> dict:
     dataset = dataset or active_dataset()
     # /add is a multipart file-upload endpoint (per the live OpenAPI schema): the note
     # goes in the `data` file field and the dataset in the `datasetName` form field.
     # JSON is rejected. Auth-only headers so httpx sets the multipart boundary itself.
-    await ensure_dataset(dataset)
+    if ensure:
+        await ensure_dataset(dataset)  # skip when a batch caller already ensured it
     files = [("data", ("note.txt", text.encode("utf-8"), "text/plain"))]
     data = {"datasetName": dataset}
     if node_set:
@@ -136,16 +138,23 @@ def note_node_set(note_id: int) -> str:
     return f"note_{note_id}"
 
 
+def note_payload(note: dict) -> str:
+    """The text we send to Cognee for a note: title, blank line, then body. One shared
+    definition for single-note ingest, the sync sweep, and rebuild."""
+    return f"{note['title']}\n\n{note['text']}".strip()
+
+
 async def add_note_chunks(note_id: int, text: str, dataset: str | None = None) -> int:
     """Split a note and add each chunk as a separate /add call, ALL grouped under the
     single node_set tag "note_<id>". Does NOT cognify — the caller cognifies ONCE after
     a whole batch (cognify is the expensive step). Returns the number of chunks added.
     """
     dataset = dataset or active_dataset()
+    await ensure_dataset(dataset)  # once per note, not once per chunk
     tag = note_node_set(note_id)
     chunks = chunking.split_note(text)
     for chunk in chunks:
-        await add(chunk, dataset=dataset, node_set=[tag])
+        await add(chunk, dataset=dataset, node_set=[tag], ensure=False)
     return len(chunks)
 
 
