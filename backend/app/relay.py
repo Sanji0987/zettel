@@ -16,6 +16,9 @@ import httpx
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
 N8N_CHAT_WEBHOOK = os.environ.get("N8N_CHAT_WEBHOOK", "").strip()
+# The n8n sync worker's webhook — lets a manual "sync now" kick the worker immediately.
+# The worker ALSO runs on its own schedule (cron lives in n8n, not FastAPI). Empty = no-op.
+N8N_SYNC_WEBHOOK = os.environ.get("N8N_SYNC_WEBHOOK", "").strip()
 
 _TIMEOUT = httpx.Timeout(10.0, connect=3.0)
 
@@ -67,3 +70,17 @@ async def chat(message: str, mode: str, history: list[dict]) -> dict:
         "sources": data.get("sources", []),
         "draft": data.get("draft"),  # {title, text} in write mode, else None
     }
+
+
+async def trigger_sync() -> dict:
+    """Kick the n8n sync worker immediately (optional — it also runs on a schedule).
+
+    Pure relay: FastAPI's /api/sync/run does the actual work; this just pokes n8n so a
+    user doesn't have to wait for the next scheduled tick. No-op when unconfigured.
+    """
+    if not N8N_SYNC_WEBHOOK:
+        return {"triggered": False, "reason": "N8N_SYNC_WEBHOOK unset"}
+    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
+        resp = await client.post(N8N_SYNC_WEBHOOK, json={"source": "manual"})
+        resp.raise_for_status()
+    return {"triggered": True}

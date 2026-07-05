@@ -4,6 +4,7 @@ In the single-container build, this also serves the compiled React app
 from /app/static. In dev (two-server), CORS is open so Vite on :5173
 can call the API on :8000.
 """
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -141,7 +142,9 @@ async def ingest_note(note_id: int) -> dict:
         raise HTTPException(status_code=404, detail="Note not found")
     payload = f"{note['title']}\n\n{note['text']}".strip()
     try:
-        await cognee_client.add(payload)
+        # Chunk (only if large) and add each chunk under node_set "note_<id>", then
+        # cognify ONCE. Small notes stay a single chunk.
+        await cognee_client.add_note_chunks(note_id, payload)
         await cognee_client.cognify()
     except cognee_client.CogneeError as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -239,6 +242,153 @@ async def chat(body: ChatIn) -> dict:
         return await relay.chat(body.message, body.mode, body.history)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"chat webhook error: {e}")
+
+
+# ---- Sync layer (queue + cron-driven worker) ---------------------------
+# SQLite is the source of truth; the Cognee graph is derived. The sync worker pushes
+# pending notes into the graph and syncs deletions out. cognify is the expensive step,
+# so it runs at most ONCE per /run and ONLY when >=1 note was actually added.
+
+# Single-flight: the n8n cron and a manual trigger must never run /sync/run at once
+# (a concurrent double-cognify is exactly the cost mistake we're guarding against).
+_sync_lock = asyncio.Lock()
+
+# One /run pulls at most this many of each queue. Keeps a single sweep bounded.
+SYNC_BATCH = int(os.environ.get("SYNC_BATCH", "200"))
+
+
+@app.get("/api/sync/status")
+def sync_status() -> dict:
+    """Queue depths. The cron worker checks this FIRST and does nothing (never cognifies)
+    when both pending and pending_removals are 0."""
+    return db.sync_counts()
+
+
+@app.get("/api/sync/failed")
+def sync_failed() -> dict:
+    """Quarantined failed notes + their error reasons, for user review before requeue."""
+    return {"failed": db.list_failed()}
+
+
+@app.post("/api/sync/failed/{note_id}/requeue")
+def sync_requeue(note_id: int) -> dict:
+    if not db.requeue_failed(note_id):
+        raise HTTPException(status_code=404, detail="No failed note with that id")
+    return {"requeued": note_id}
+
+
+@app.get("/api/sync/pending/next")
+def sync_pending_next(limit: int = 50) -> dict:
+    """Peek the next batch of pending notes (for an external per-item orchestrator)."""
+    return {"items": db.list_pending(limit)}
+
+
+class PendingAckIn(BaseModel):
+    done: list[int] = Field(default_factory=list)
+    failed: list[dict] = Field(default_factory=list)  # [{"id": int, "reason": str}]
+
+
+@app.post("/api/sync/pending/ack")
+def sync_pending_ack(body: PendingAckIn) -> dict:
+    """Per-item ack for the granular path. NOTE: marking done here does not cognify —
+    an external orchestrator using this path owns its own cognify. The built-in worker
+    uses /api/sync/run instead, which cognifies once."""
+    done = db.mark_done(body.done)
+    failed = 0
+    for f in body.failed:
+        try:
+            db.mark_failed(int(f["id"]), str(f.get("reason", "")))
+            failed += 1
+        except (KeyError, ValueError, TypeError):
+            continue
+    return {"marked_done": done, "marked_failed": failed}
+
+
+@app.get("/api/sync/removal/next")
+def sync_removal_next(limit: int = 50) -> dict:
+    return {"items": db.list_pending_removals(limit)}
+
+
+class RemovalAckIn(BaseModel):
+    done: list[int] = Field(default_factory=list)
+
+
+@app.post("/api/sync/removal/ack")
+def sync_removal_ack(body: RemovalAckIn) -> dict:
+    return {"marked_done": db.mark_removals_done(body.done)}
+
+
+async def _do_sync_run() -> dict:
+    """One full sweep: add pending notes (chunked, grouped by node_set), sync removals
+    out, then cognify ONCE — only if at least one note was successfully added. Notes are
+    marked done only AFTER cognify succeeds (before that they aren't searchable)."""
+    counts = db.sync_counts()
+    if counts["pending"] == 0 and counts["pending_removals"] == 0:
+        # #1 cost protection: never cognify on an empty queue.
+        return {"ran": True, "empty": True, "added_notes": 0, "chunks": 0,
+                "removed": 0, "failed": 0, "cognified": False}
+
+    pending = db.list_pending(SYNC_BATCH)
+    added_ids: list[int] = []
+    total_chunks = 0
+    failed = 0
+    for note in pending:
+        payload = f"{note['title']}\n\n{note['text']}".strip()
+        try:
+            if payload:
+                total_chunks += await cognee_client.add_note_chunks(note["id"], payload)
+            added_ids.append(note["id"])
+        except cognee_client.CogneeError as e:
+            db.mark_failed(note["id"], str(e))
+            failed += 1
+        except Exception as e:  # noqa: BLE001 - quarantine, don't crash the sweep
+            db.mark_failed(note["id"], f"{type(e).__name__}: {e}")
+            failed += 1
+
+    # Removals: best-effort delete from the graph. A hard 4xx (incremental delete not
+    # supported) still clears the tombstone — a full rebuild is the real reconciliation.
+    removals = db.list_pending_removals(SYNC_BATCH)
+    removal_done: list[int] = []
+    for rm in removals:
+        try:
+            res = await cognee_client.delete_note_data(rm["note_id"])
+            if res["status"] < 500:
+                removal_done.append(rm["id"])
+            # transient 5xx -> leave pending for next cycle
+        except httpx.HTTPError:
+            pass  # network blip -> retry next cycle
+
+    # cognify ONCE, only if new data actually landed. This is the single gate that keeps
+    # the hands-off timer from silently burning the token budget.
+    cognified = False
+    if added_ids:
+        try:
+            await cognee_client.cognify()
+            cognified = True
+            db.mark_done(added_ids)
+        except cognee_client.CogneeError as e:
+            for nid in added_ids:
+                db.mark_failed(nid, f"cognify failed: {e}")
+            failed += len(added_ids)
+
+    if removal_done:
+        db.mark_removals_done(removal_done)
+
+    return {"ran": True, "empty": False, "added_notes": len(added_ids),
+            "chunks": total_chunks, "removed": len(removal_done),
+            "failed": failed, "cognified": cognified}
+
+
+@app.post("/api/sync/run")
+async def sync_run() -> dict:
+    """Manual/cron trigger for a full sweep. Single-flight: returns 409 if a sweep
+    (cron or manual) is already in progress."""
+    if not cognee_client.is_configured():
+        raise HTTPException(status_code=503, detail="Cognee not configured (.env)")
+    if _sync_lock.locked():
+        raise HTTPException(status_code=409, detail="sync already running")
+    async with _sync_lock:
+        return await _do_sync_run()
 
 
 # ---- Static React (single-container prod). Mounted only if the build exists.
