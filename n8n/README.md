@@ -23,9 +23,12 @@ The main workflow's `Execute B` node references `EcK7bqSZd2CiEBvH`; both the mai
 
 ## Credentials (NOT in the export — secrets are never exported)
 Nodes reference credentials by ID/name; recreate these on a fresh instance:
-- **Ollama account** (`ollamaApi`, id `Zl9lspYFi45GrFwM`) — Base URL `http://ollama:11434`.
+- **Groq account** (`groqApi`, id `woCh9CG7qUGXmSCX`) — the chat brain's model nodes. Holds
+  the Groq API key.
 - **Cognee account** (`cogneeApi`, id `rvhw3tMxtNWBoYSU`) — Base URL
   `https://tenant-b24860eb-9dce-41a1-9f11-13d7a8f9cdd7.aws.cognee.ai`, plus the API key.
+- **Ollama account** (`ollamaApi`, id `Zl9lspYFi45GrFwM`) — Base URL `http://ollama:11434`.
+  No longer used by the chat brain (kept for the `ollama-version` branch / app status ping).
 
 ## Restore
 Inside the n8n container:
@@ -43,8 +46,10 @@ it only calls the app's own REST API over `n8n-net`.
 - Length threshold: env `DECOMP_WORD_THRESHOLD` (default **40**), read in the main
   `Length Gate` node; the splitter reuses the passed-through threshold. High by design.
 - Sub-question caps: 5 per level, in `Parse L1` / `Parse L2` code nodes.
-- Model: `gemma4:e2b` with `num_ctx: 8192` pinned on every Ollama model node (the
-  default 131072 context crashes llama-server).
+- Model: **Groq `openai/gpt-oss-120b`** (cloud) on every model node — `lmChatGroq`,
+  temperature 0.2, credential **Groq account** (`groqApi`, id `woCh9CG7qUGXmSCX`). The
+  earlier local-Ollama version (`gemma4:e2b`, `num_ctx 8192`) is frozen on the
+  `ollama-version` git branch.
 - App wiring: FastAPI relay posts to `N8N_CHAT_WEBHOOK=http://n8n:5678/webhook/zettel-chat`.
 
 _A copy of these files also lives in the app repo at `zettelkeistan/n8n/`._

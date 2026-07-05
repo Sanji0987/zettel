@@ -133,23 +133,23 @@
       },
       {
         "parameters": {
-          "model": "gemma4:e2b",
+          "model": "openai/gpt-oss-120b",
           "options": {
-            "numCtx": 8192
+            "temperature": 0.2
           }
         },
         "id": "75871850-711d-4b87-a449-9263dcc0d23e",
-        "name": "Ollama Write Model",
-        "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+        "name": "Groq Write Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
         "typeVersion": 1,
         "position": [
           2096,
           1408
         ],
         "credentials": {
-          "ollamaApi": {
-            "id": "Zl9lspYFi45GrFwM",
-            "name": "Ollama account"
+          "groqApi": {
+            "id": "woCh9CG7qUGXmSCX",
+            "name": "Groq account"
           }
         }
       },
@@ -283,23 +283,23 @@
       },
       {
         "parameters": {
-          "model": "gemma4:e2b",
+          "model": "openai/gpt-oss-120b",
           "options": {
-            "numCtx": 8192
+            "temperature": 0.2
           }
         },
         "id": "c8cd69e6-da6b-4699-88b6-6eae5c3294da",
-        "name": "Ollama Compose Model",
-        "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+        "name": "Groq Compose Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
         "typeVersion": 1,
         "position": [
           1728,
           240
         ],
         "credentials": {
-          "ollamaApi": {
-            "id": "Zl9lspYFi45GrFwM",
-            "name": "Ollama account"
+          "groqApi": {
+            "id": "woCh9CG7qUGXmSCX",
+            "name": "Groq account"
           }
         }
       },
@@ -336,23 +336,23 @@
       },
       {
         "parameters": {
-          "model": "gemma4:e2b",
+          "model": "openai/gpt-oss-120b",
           "options": {
-            "numCtx": 8192
+            "temperature": 0.2
           }
         },
         "id": "42b6a53c-7607-472a-9d0d-eca7e1a5c163",
         "name": "L1 Decompose Model",
-        "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
         "typeVersion": 1,
         "position": [
           1136,
           512
         ],
         "credentials": {
-          "ollamaApi": {
-            "id": "Zl9lspYFi45GrFwM",
-            "name": "Ollama account"
+          "groqApi": {
+            "id": "woCh9CG7qUGXmSCX",
+            "name": "Groq account"
           }
         }
       },
@@ -464,23 +464,23 @@
       },
       {
         "parameters": {
-          "model": "gemma4:e2b",
+          "model": "openai/gpt-oss-120b",
           "options": {
-            "numCtx": 8192
+            "temperature": 0.2
           }
         },
         "id": "11400e2d-9f06-48fc-9d5a-bef2fb5123fc",
         "name": "Synth Model",
-        "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
         "typeVersion": 1,
         "position": [
           2560,
           848
         ],
         "credentials": {
-          "ollamaApi": {
-            "id": "Zl9lspYFi45GrFwM",
-            "name": "Ollama account"
+          "groqApi": {
+            "id": "woCh9CG7qUGXmSCX",
+            "name": "Groq account"
           }
         }
       },
@@ -568,17 +568,6 @@
           ]
         ]
       },
-      "Ollama Write Model": {
-        "ai_languageModel": [
-          [
-            {
-              "node": "Draft Note",
-              "type": "ai_languageModel",
-              "index": 0
-            }
-          ]
-        ]
-      },
       "Assemble Write Draft": {
         "main": [
           [
@@ -636,17 +625,6 @@
             {
               "node": "Compose Answer",
               "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Ollama Compose Model": {
-        "ai_languageModel": [
-          [
-            {
-              "node": "Compose Answer",
-              "type": "ai_languageModel",
               "index": 0
             }
           ]
@@ -790,6 +768,28 @@
             }
           ]
         ]
+      },
+      "Groq Write Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Draft Note",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Groq Compose Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Compose Answer",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "settings": {
@@ -804,9 +804,9 @@
     },
     "nodeGroups": [],
     "pinData": {},
-    "versionId": "7ce8020e-5983-420b-9e5f-ce997a7190c2",
-    "activeVersionId": "7ce8020e-5983-420b-9e5f-ce997a7190c2",
-    "versionCounter": 42,
+    "versionId": "08f17009-5f18-4911-bd51-3fe822d85296",
+    "activeVersionId": "08f17009-5f18-4911-bd51-3fe822d85296",
+    "versionCounter": 43,
     "triggerCount": 1,
     "sourceWorkflowId": null,
     "tags": [],

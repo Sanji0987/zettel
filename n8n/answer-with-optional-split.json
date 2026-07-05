@@ -146,23 +146,23 @@
       },
       {
         "parameters": {
-          "model": "gemma4:e2b",
+          "model": "openai/gpt-oss-120b",
           "options": {
-            "numCtx": 8192
+            "temperature": 0.2
           }
         },
         "id": "d16a36af-66e0-4664-bdb3-e9f7a83cecba",
         "name": "L2 Decompose Model",
-        "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
         "typeVersion": 1,
         "position": [
           672,
           560
         ],
         "credentials": {
-          "ollamaApi": {
-            "id": "Zl9lspYFi45GrFwM",
-            "name": "Ollama account"
+          "groqApi": {
+            "id": "woCh9CG7qUGXmSCX",
+            "name": "Groq account"
           }
         }
       },
@@ -372,9 +372,9 @@
     },
     "nodeGroups": [],
     "pinData": {},
-    "versionId": "16ff8ae0-ba0d-41a0-a776-0b46ed18e56f",
-    "activeVersionId": "b052e2c3-e38d-4873-937e-eec42ef60873",
-    "versionCounter": 9,
+    "versionId": "a983d7f3-d5df-47e0-ad29-fe34135096ac",
+    "activeVersionId": "a983d7f3-d5df-47e0-ad29-fe34135096ac",
+    "versionCounter": 10,
     "triggerCount": 0,
     "sourceWorkflowId": null,
     "tags": [],
