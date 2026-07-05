@@ -1,16 +1,17 @@
-# Zettelkeistan Chat Brain — n8n workflow backups
+# Zettelkeistan n8n workflow backups
 
-Byte-accurate exports (via `n8n export:workflow --pretty`) of the three workflows that
-make up the chat brain. Each file is an n8n export array (`[ { ...workflow... } ]`),
-directly importable.
+Byte-accurate exports (via `n8n export:workflow --pretty`) of the workflows: the three
+that make up the **chat brain**, plus the **sync worker** (cron ingest). Each file is an
+n8n export array (`[ { ...workflow... } ]`), directly importable.
 
-## The three workflows (import all; order doesn't matter — refs are by ID)
+## The workflows (import all; order doesn't matter — refs are by ID)
 
 | File | Name | ID | Role |
 |------|------|----|------|
 | `cognee-retrieve-one.json` | Cognee Retrieve One | `5uv43KZGPL1Icge9` | Leaf retrieval unit: `{query}` → one Cognee `GRAPH_COMPLETION` search on `zettelkeistan_v3` → `{answer, sources}`. The **only** Cognee caller. |
 | `answer-with-optional-split.json` | Answer With Optional Split | `EcK7bqSZd2CiEBvH` | Depth-2 helper: length-gates one L1 sub-question; under → retrieve directly, over → decompose once (L2, cap 5) → retrieve each → combine. Calls only Cognee Retrieve One (no recursion). |
 | `zettelkeistan-chat-brain.json` | Zettelkeistan Chat Brain | `esKtUJ1YYfLlyOAT` | Main. Webhook `POST /webhook/zettel-chat` → mode switch → write (draft) / read (length gate → simple or L1-decompose → synthesize). |
+| `zettelkeistan-sync-worker.json` | Zettelkeistan Sync Worker | `C68CgGpRqaGBZaGi` | Cron ingest. Schedule (20 min) → `GET http://zettelkeistan:8000/api/sync/status` → IF `pending>0 OR pending_removals>0` → `POST /api/sync/run`. No credentials. Never runs the sweep on an empty queue. |
 
 ## Cross-references (IMPORTANT)
 The main workflow's `Execute B` node references `EcK7bqSZd2CiEBvH`; both the main
@@ -32,9 +33,11 @@ Inside the n8n container:
 docker cp cognee-retrieve-one.json n8n:/tmp/ && docker exec n8n n8n import:workflow --input=/tmp/cognee-retrieve-one.json
 docker cp answer-with-optional-split.json n8n:/tmp/ && docker exec n8n n8n import:workflow --input=/tmp/answer-with-optional-split.json
 docker cp zettelkeistan-chat-brain.json n8n:/tmp/ && docker exec n8n n8n import:workflow --input=/tmp/zettelkeistan-chat-brain.json
+docker cp zettelkeistan-sync-worker.json n8n:/tmp/ && docker exec n8n n8n import:workflow --input=/tmp/zettelkeistan-sync-worker.json
 ```
-Then re-attach credentials (if new instance), and activate all three (UI toggle or
-`n8n update:workflow --id=<id> --active=true`).
+Then re-attach credentials (if new instance), and activate all (UI toggle or
+`n8n update:workflow --id=<id> --active=true`). The sync worker needs no credentials —
+it only calls the app's own REST API over `n8n-net`.
 
 ## Config notes
 - Length threshold: env `DECOMP_WORD_THRESHOLD` (default **40**), read in the main
