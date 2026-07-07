@@ -1,10 +1,10 @@
 [
   {
-    "updatedAt": "2026-07-07T05:34:34.000Z",
+    "updatedAt": "2026-07-07T07:05:00.000Z",
     "createdAt": "2026-07-04T10:40:00.807Z",
     "id": "5uv43KZGPL1Icge9",
     "name": "Cognee Retrieve One",
-    "description": "Shared grounding unit: takes {query}, CHUNKS search on the active dataset, then Groq judges relevance and answers ONLY from the chunks (or NOT_IN_NOTES). Returns {answer, sources, grounded}.",
+    "description": "Shared retrieval unit. CHUNKS search is the existence gate; a Groq judge (gpt-oss-120b) decides if relevant content exists. Only if it does does GRAPH_COMPLETION run for the cross-note answer. Empty gate -> NOT_IN_NOTES, GRAPH_COMPLETION never fires. Returns {answer, sources, grounded}.",
     "active": true,
     "isArchived": false,
     "nodes": [
@@ -75,7 +75,7 @@
           "promptType": "define",
           "text": "={{ $json.query }}",
           "options": {
-            "systemMessage": "=You answer strictly from the note excerpts below. Use ONLY these excerpts to answer the question. If the excerpts do not actually contain information that answers the question, respond with exactly NOT_IN_NOTES and nothing else. Do not use any outside knowledge. Do not guess.\n\nNote excerpts:\n{{ $json.chunksText }}",
+            "systemMessage": "=You are a relevance gate, not an answerer. Below are excerpts retrieved from the user's personal notes. Decide whether these excerpts actually contain information relevant to answering the user's question.\n\nRespond with exactly ONE word:\n- RELEVANT  \u2014 if the excerpts contain content that addresses the question.\n- NOT_IN_NOTES \u2014 if they do not.\n\nDo NOT answer the question. Do NOT use outside knowledge. Output only the single word.\n\nNote excerpts:\n{{ $json.chunksText }}",
             "enableStreaming": false
           }
         }
@@ -114,8 +114,97 @@
         "parameters": {
           "mode": "runOnceForAllItems",
           "language": "javaScript",
-          "jsCode": "// Judge output -> grounded answer or the NOT_IN_NOTES sentinel.\nlet raw = ($input.first().json.output || '').toString();\nraw = raw.replace(/<think>[\\s\\S]*?<\\/think>/gi,'')\n         .replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi,'')\n         .replace(/<\\|?\\/?think\\|?>/gi,'').trim();\nconst notInNotes = /NOT_IN_NOTES/i.test(raw) || raw.length === 0;\nconst grounded = !notInNotes;\nconst sources = grounded ? ($('Format Chunks').first().json.chunks || []) : [];\nreturn [{ json: { answer: grounded ? raw : 'NOT_IN_NOTES', sources, grounded } }];\n"
+          "jsCode": "// Relevance gate. RELEVANT => allow GRAPH_COMPLETION; anything else => NOT_IN_NOTES.\nlet raw = ($input.first().json.output || '').toString();\nraw = raw.replace(/<think>[\\s\\S]*?<\\/think>/gi,'')\n         .replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi,'')\n         .replace(/<\\|?\\/?think\\|?>/gi,'').trim();\nconst notIn = /NOT_IN_NOTES/i.test(raw);\nconst rel = /RELEVANT/i.test(raw);\nconst relevant = rel && !notIn;              // ambiguous/empty => NOT relevant (safe)\nconst gate = relevant ? 'relevant' : 'empty';\nconst fc = $('Format Chunks').first().json;\nreturn [{ json: { gate, grounded: relevant, query: (fc.query||'').toString(), chunks: fc.chunks || [] } }];\n"
         }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "g1",
+                "leftValue": "={{ $json.gate }}",
+                "rightValue": "relevant",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "3e62af8b-5244-4041-ae1b-e7c4e4415e0a",
+        "name": "IF Grounded",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          1440,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "search",
+          "operation": "search",
+          "searchType": "GRAPH_COMPLETION",
+          "datasets": [
+            "zettelkeistan_v3"
+          ],
+          "query": "={{ $json.query }}",
+          "topK": 10
+        },
+        "id": "97d519e8-0465-4a35-b7fe-e99acb50e023",
+        "name": "Graph Answer",
+        "type": "n8n-nodes-cognee.cognee",
+        "typeVersion": 1,
+        "position": [
+          1680,
+          200
+        ],
+        "credentials": {
+          "cogneeApi": {
+            "id": "rvhw3tMxtNWBoYSU",
+            "name": "Cognee account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "// GRAPH_COMPLETION result -> grounded answer; sources are the gated chunks.\nconst items = $input.all();\nlet parts = [];\nfunction push(c){ if(c==null) return; if(typeof c==='string'){ if(c.trim()) parts.push(c); }\n  else if(typeof c==='object' && c.text){ parts.push(c.text.toString()); }\n  else { const s=JSON.stringify(c); if(s && s!=='{}') parts.push(s); } }\nfor(const it of items){ const j=it.json||{};\n  if(Array.isArray(j.search_result)) j.search_result.forEach(push);\n  else if(Array.isArray(j)) j.forEach(push);\n  else if(j.search_result!=null && j.search_result!=='') push(j.search_result);\n  else if(j.text) push(j); }\nlet answer = parts.filter(Boolean).join('\\n\\n').trim();\nif(!answer) answer='NOT_IN_NOTES';\nconst sources = $('Format Chunks').first().json.chunks || [];\nreturn [{ json: { answer, sources: answer==='NOT_IN_NOTES'?[]:sources, grounded: answer!=='NOT_IN_NOTES' } }];\n"
+        },
+        "id": "8f307be5-43fe-42fe-b205-20b85680de53",
+        "name": "Format Graph",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1920,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "return [{ json: { answer: 'NOT_IN_NOTES', sources: [], grounded: false } }];"
+        },
+        "id": "812e59e9-0c9b-40a1-a901-9adfe48e5637",
+        "name": "Not In Notes",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1680,
+          420
+        ]
       }
     ],
     "connections": {
@@ -152,6 +241,17 @@
           ]
         ]
       },
+      "Groq Judge Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Groq Judge",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
       "Groq Judge": {
         "main": [
           [
@@ -163,12 +263,41 @@
           ]
         ]
       },
-      "Groq Judge Model": {
-        "ai_languageModel": [
+      "Parse Judge": {
+        "main": [
           [
             {
-              "node": "Groq Judge",
-              "type": "ai_languageModel",
+              "node": "IF Grounded",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF Grounded": {
+        "main": [
+          [
+            {
+              "node": "Graph Answer",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Not In Notes",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Graph Answer": {
+        "main": [
+          [
+            {
+              "node": "Format Graph",
+              "type": "main",
               "index": 0
             }
           ]
@@ -186,8 +315,8 @@
     },
     "nodeGroups": [],
     "pinData": null,
-    "versionId": "3694186a-28dc-4623-836e-b3ebcac8c846",
-    "activeVersionId": "3694186a-28dc-4623-836e-b3ebcac8c846",
+    "versionId": "0a64a1dd-7dd2-48c7-88b6-67ec000ddc6a",
+    "activeVersionId": "0a64a1dd-7dd2-48c7-88b6-67ec000ddc6a",
     "versionCounter": 4,
     "triggerCount": 0,
     "sourceWorkflowId": null,
