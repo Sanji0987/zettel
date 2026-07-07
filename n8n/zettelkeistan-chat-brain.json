@@ -1,6 +1,6 @@
 [
   {
-    "updatedAt": "2026-07-04T11:00:37.889Z",
+    "updatedAt": "2026-07-07T05:31:23.000Z",
     "createdAt": "2026-07-04T06:33:35.231Z",
     "id": "esKtUJ1YYfLlyOAT",
     "name": "Zettelkeistan Chat Brain",
@@ -27,7 +27,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const item = $input.first().json;\nconst b = item.body || item;\nconst message = (b.message || '').toString();\nconst mode = b.mode === 'write' ? 'write' : 'read';\nconst history = Array.isArray(b.history) ? b.history : [];\nconst historyText = history.map(h => (h.role === 'assistant' ? 'Assistant: ' : 'User: ') + (h.content || '')).join('\\n');\nreturn [{ json: { message, mode, historyText } }];"
+          "jsCode": "const item = $input.first().json;\nconst b = item.body || item;\nlet message = (b.message || '').toString();\nconst mode = b.mode === 'write' ? 'write' : 'read';\nconst history = Array.isArray(b.history) ? b.history : [];\nconst historyText = history.map(h => (h.role === 'assistant' ? 'Assistant: ' : 'User: ') + (h.content || '')).join('\\n');\nconst dr = b.decision_response || null;\nconst isDecision = (dr && dr.id) ? 'yes' : 'no';\nlet choice = '', decisionType = '', decisionKey = '';\nif (isDecision === 'yes') {\n  choice = (dr.choice || '').toString();\n  decisionType = (dr.type || '').toString();\n  decisionKey = decisionType + ':' + choice;\n  if (!message) {\n    for (let i = history.length - 1; i >= 0; i--) {\n      if (history[i] && history[i].role === 'user' && history[i].content) { message = history[i].content.toString(); break; }\n    }\n  }\n}\nreturn [{ json: { message, mode, historyText, isDecision, choice, decisionType, decisionKey } }];"
         },
         "id": "0c14e8ec-d516-4731-b559-b3d065733378",
         "name": "Normalize Request",
@@ -155,7 +155,7 @@
       },
       {
         "parameters": {
-          "jsCode": "let raw = ($input.first().json.output || '').toString();\nraw = raw.replace(/<think>[\\s\\S]*?<\\/think>/gi, '');\nraw = raw.replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi, '');\nraw = raw.replace(/<\\|?\\/?think\\|?>/gi, '').trim();\nlet draft = null;\ntry { const m = raw.match(/\\{[\\s\\S]*\\}/); if (m) { const o = JSON.parse(m[0]); draft = { title: (o.title || '').toString().slice(0, 500), text: (o.text || '').toString() }; } } catch (e) { draft = null; }\nif (!draft) { draft = { title: '', text: raw }; }\nconst reply = draft.title ? ('Draft: ' + draft.title + '\\n\\n' + draft.text) : ('Draft:\\n\\n' + draft.text);\nreturn [{ json: { reply, mode: 'write', sources: [], draft } }];"
+          "jsCode": "let raw = ($input.first().json.output || '').toString();\nraw = raw.replace(/<think>[\\s\\S]*?<\\/think>/gi, '');\nraw = raw.replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi, '');\nraw = raw.replace(/<\\|?\\/?think\\|?>/gi, '').trim();\nlet draft = null;\ntry { const m = raw.match(/\\{[\\s\\S]*\\}/); if (m) { const o = JSON.parse(m[0]); draft = { title: (o.title || '').toString().slice(0, 500), text: (o.text || '').toString() }; } } catch (e) { draft = null; }\nif (!draft) { draft = { title: '', text: raw }; }\nconst reply = draft.title ? ('Draft: ' + draft.title + '\\n\\n' + draft.text) : ('Draft:\\n\\n' + draft.text);\nreturn [{ json: { reply, mode: 'write', sources: [], draft, pending_decision: null } }];"
         },
         "id": "747d920b-9fda-421a-9a0b-a2ee025a3ab9",
         "name": "Assemble Write Draft",
@@ -268,6 +268,14 @@
             "mode": "id",
             "value": "5uv43KZGPL1Icge9"
           },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {},
+            "matchingColumns": [],
+            "schema": [],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          },
           "options": {
             "waitForSubWorkflow": true
           }
@@ -283,47 +291,7 @@
       },
       {
         "parameters": {
-          "model": "openai/gpt-oss-120b",
-          "options": {
-            "temperature": 0.2
-          }
-        },
-        "id": "c8cd69e6-da6b-4699-88b6-6eae5c3294da",
-        "name": "Groq Compose Model",
-        "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
-        "typeVersion": 1,
-        "position": [
-          1728,
-          240
-        ],
-        "credentials": {
-          "groqApi": {
-            "id": "woCh9CG7qUGXmSCX",
-            "name": "Groq account"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "promptType": "define",
-          "text": "={{ $('Length Gate').item.json.message }}",
-          "options": {
-            "systemMessage": "=You answer questions from the user's personal knowledge notes. Using ONLY the retrieved notes provided below, write a clear, direct answer to the user's question. If the retrieved notes do not contain the answer, say you don't have that in your notes.\n\nRetrieved notes:\n{{ $json.answer }}",
-            "enableStreaming": false
-          }
-        },
-        "id": "7d63fc48-2cc2-4b6f-a314-adf5286939c5",
-        "name": "Compose Answer",
-        "type": "@n8n/n8n-nodes-langchain.agent",
-        "typeVersion": 3.1,
-        "position": [
-          1744,
-          -16
-        ]
-      },
-      {
-        "parameters": {
-          "jsCode": "let reply = ($input.first().json.output || '').toString();\nreply = reply.replace(/<think>[\\s\\S]*?<\\/think>/gi, '');\nreply = reply.replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi, '');\nreply = reply.replace(/<\\|?\\/?think\\|?>/gi, '').trim();\nconst sources = $('Execute Retrieval').item.json.sources || [];\nreturn [{ json: { reply, mode: 'read', sources, draft: null } }];"
+          "jsCode": "const r = $('Execute Retrieval').item.json;\nconst ans = (r.answer || '').toString();\nconst grounded = ans && ans !== 'NOT_IN_NOTES';\nconst WEB_OFFER = { id:'web_search_offer', type:'web_search_offer', prompt:'Want me to search the web instead?', options:[{id:'web',label:'Search the web'},{id:'stop',label:'Give up'}] };\nif (grounded) {\n  return [{ json: { reply: ans, mode: 'read', sources: r.sources || [], draft: null, pending_decision: null } }];\n}\nreturn [{ json: { reply: \"I don't have that in your notes.\", mode: 'read', sources: [], draft: null, pending_decision: WEB_OFFER } }];"
         },
         "id": "b1353c1b-cadb-4654-9734-fe82d91231b3",
         "name": "Assemble Read",
@@ -451,7 +419,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const runs = $input.all();\nlet parts = [], sources = [];\nfor (const r of runs) { const a = (r.json.answer || '').toString(); if (a) parts.push(a); const s = r.json.sources || []; if (Array.isArray(s)) sources.push(...s); }\nconst context = parts.map((p, i) => 'Sub-answer ' + (i + 1) + ': ' + p).join('\\n\\n');\nreturn [{ json: { context, sources } }];"
+          "jsCode": "const runs = $input.all();\nlet parts = [], sources = [];\nfor (const r of runs) {\n  const a = (r.json.answer || '').toString();\n  if (a && a !== 'NOT_IN_NOTES') parts.push(a);\n  const s = r.json.sources || [];\n  if (Array.isArray(s)) sources.push(...s);\n}\nconst anyGrounded = parts.length > 0;\nconst context = parts.map((p, i) => 'Sub-answer ' + (i + 1) + ': ' + p).join('\\n\\n');\nreturn [{ json: { context, sources, anyGrounded } }];"
         },
         "id": "33bfd247-b865-49e9-a914-e29ef8687363",
         "name": "Aggregate",
@@ -504,7 +472,7 @@
       },
       {
         "parameters": {
-          "jsCode": "let reply = ($input.first().json.output || '').toString();\nreply = reply.replace(/<think>[\\s\\S]*?<\\/think>/gi, '').replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi, '').replace(/<\\|?\\/?think\\|?>/gi, '').trim();\nconst sources = $('Aggregate').item.json.sources || [];\nreturn [{ json: { reply, mode: 'read', sources, draft: null } }];"
+          "jsCode": "const agg = $('Aggregate').item.json;\nconst WEB_OFFER = { id:'web_search_offer', type:'web_search_offer', prompt:'Want me to search the web instead?', options:[{id:'web',label:'Search the web'},{id:'stop',label:'Give up'}] };\nif (!agg.anyGrounded) {\n  return [{ json: { reply: \"I don't have that in your notes.\", mode: 'read', sources: [], draft: null, pending_decision: WEB_OFFER } }];\n}\nlet reply = ($input.first().json.output || '').toString();\nreply = reply.replace(/<think>[\\s\\S]*?<\\/think>/gi,'').replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi,'').replace(/<\\|?\\/?think\\|?>/gi,'').trim();\nconst sources = agg.sources || [];\nreturn [{ json: { reply, mode: 'read', sources, draft: null, pending_decision: null } }];"
         },
         "id": "d6a7c025-8b2b-472f-9b7f-abfc928fe242",
         "name": "Assemble Read D",
@@ -513,6 +481,175 @@
         "position": [
           2976,
           624
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "loose",
+                    "version": 1
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.isDecision }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "yes"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "loose",
+                    "version": 1
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.isDecision }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "no"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "9dec5a55-7f6a-4040-a570-ef57899df56e",
+        "name": "Route Kind",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          384,
+          384
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "loose",
+                    "version": 1
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.decisionKey }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "web_search_offer:web"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra"
+          }
+        },
+        "id": "aef860f2-9c51-4363-8561-51eed79d3322",
+        "name": "Decision Router",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          640,
+          1600
+        ]
+      },
+      {
+        "parameters": {
+          "model": "openai/gpt-oss-120b",
+          "options": {
+            "temperature": 0.3
+          }
+        },
+        "id": "2141bb3b-18a9-42c9-9cb5-541f81b68b78",
+        "name": "Web Answer Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+        "typeVersion": 1,
+        "position": [
+          880,
+          1760
+        ],
+        "credentials": {
+          "groqApi": {
+            "id": "woCh9CG7qUGXmSCX",
+            "name": "Groq account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $('Normalize Request').item.json.message }}",
+          "options": {
+            "systemMessage": "You are a general-knowledge assistant. The user's personal notes did NOT contain an answer to their question. Answer the question using your general knowledge. Be clear and concise.",
+            "enableStreaming": false
+          }
+        },
+        "id": "d8b6305d-ba74-4450-88cc-77b977598335",
+        "name": "Web Answer",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          880,
+          1520
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "let reply = ($input.first().json.output || '').toString();\nreply = reply.replace(/<think>[\\s\\S]*?<\\/think>/gi,'').replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi,'').replace(/<\\|?\\/?think\\|?>/gi,'').trim();\nreply = '\u26a0\ufe0f Not from your notes \u2014 from general/web knowledge:\\n\\n' + reply;\nreturn [{ json: { reply, mode: 'read', sources: [], draft: null, pending_decision: null } }];"
+        },
+        "id": "9d123ce5-fb49-4c15-8294-f75418b0a742",
+        "name": "Assemble Web",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1200,
+          1520
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "return [{ json: { reply: \"Okay \u2014 I'll leave it there.\", mode: 'read', sources: [], draft: null, pending_decision: null } }];"
+        },
+        "id": "3e4c33e0-7afe-43ad-847d-72cfe9bd9952",
+        "name": "Stop Ack",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          1920
         ]
       }
     ],
@@ -532,7 +669,7 @@
         "main": [
           [
             {
-              "node": "Route By Mode",
+              "node": "Route Kind",
               "type": "main",
               "index": 0
             }
@@ -620,17 +757,6 @@
         ]
       },
       "Execute Retrieval": {
-        "main": [
-          [
-            {
-              "node": "Compose Answer",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Compose Answer": {
         "main": [
           [
             {
@@ -780,12 +906,81 @@
           ]
         ]
       },
-      "Groq Compose Model": {
+      "Route Kind": {
+        "main": [
+          [
+            {
+              "node": "Decision Router",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Route By Mode",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Decision Router": {
+        "main": [
+          [
+            {
+              "node": "Web Answer",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Stop Ack",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Web Answer Model": {
         "ai_languageModel": [
           [
             {
-              "node": "Compose Answer",
+              "node": "Web Answer",
               "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Web Answer": {
+        "main": [
+          [
+            {
+              "node": "Assemble Web",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Assemble Web": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Stop Ack": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
               "index": 0
             }
           ]
@@ -804,9 +999,9 @@
     },
     "nodeGroups": [],
     "pinData": {},
-    "versionId": "08f17009-5f18-4911-bd51-3fe822d85296",
-    "activeVersionId": "08f17009-5f18-4911-bd51-3fe822d85296",
-    "versionCounter": 43,
+    "versionId": "cbdd5c93-b03f-4257-a189-fd80bed268cc",
+    "activeVersionId": "cbdd5c93-b03f-4257-a189-fd80bed268cc",
+    "versionCounter": 45,
     "triggerCount": 1,
     "sourceWorkflowId": null,
     "tags": [],

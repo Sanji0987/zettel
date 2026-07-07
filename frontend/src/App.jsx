@@ -262,27 +262,48 @@ export default function App() {
     if (chatLogRef.current) chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight;
   }, [chatLog, chatSending]);
 
-  async function sendChat() {
-    const message = chatInput.trim();
-    if (!message || chatSending) return;
-    const history = chatLog.map(({ role, content }) => ({ role, content }));
-    setChatLog((log) => [...log, { role: "user", content: message }]);
-    setChatInput("");
+  // Single poster for both normal turns and decision answers. `body` is the /api/chat
+  // payload; `userBubble` (optional) is echoed into the log first.
+  async function postChat(body, userBubble) {
+    if (userBubble) setChatLog((log) => [...log, userBubble]);
     setChatSending(true);
     try {
       const res = await fetch(`${API}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, mode: chatMode, history }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`Chat failed (${res.status})`);
-      const { reply, sources } = await res.json();
-      setChatLog((log) => [...log, { role: "assistant", content: reply, sources: sources || [] }]);
+      const { reply, sources, pending_decision } = await res.json();
+      setChatLog((log) => [
+        ...log,
+        { role: "assistant", content: reply, sources: sources || [], pending_decision: pending_decision || null },
+      ]);
     } catch (e) {
       setChatLog((log) => [...log, { role: "assistant", content: `⚠ ${e.message}`, sources: [] }]);
     } finally {
       setChatSending(false);
     }
+  }
+
+  function sendChat() {
+    const message = chatInput.trim();
+    if (!message || chatSending) return;
+    const history = chatLog.map(({ role, content }) => ({ role, content }));
+    setChatInput("");
+    postChat({ message, mode: chatMode, history }, { role: "user", content: message });
+  }
+
+  // Generic: answer any pending_decision. The brain routes on {type, choice}; the
+  // original question is recovered from history (its last user turn).
+  function answerDecision(pd, option) {
+    if (chatSending) return;
+    const history = chatLog.map(({ role, content }) => ({ role, content }));
+    setChatLog((log) => log.map((m) => (m.pending_decision ? { ...m, pending_decision: null } : m)));
+    postChat(
+      { message: "", mode: "read", history, decision_response: { id: pd.id, type: pd.type, choice: option.id } },
+      { role: "user", content: option.label },
+    );
   }
 
   const editing = selectedId !== null;
@@ -412,6 +433,22 @@ export default function App() {
                       {j > 0 && ", "}
                       {typeof s === "string" ? s : s.url ? <a href={s.url}>{s.title || s.url}</a> : JSON.stringify(s)}
                     </span>
+                  ))}
+                </div>
+              )}
+              {/* Generic mid-conversation decision: prompt + a plain button per option. */}
+              {m.pending_decision && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ marginBottom: 4, fontSize: "0.9em" }}>{m.pending_decision.prompt}</div>
+                  {(m.pending_decision.options || []).map((opt) => (
+                    <button
+                      key={opt.id}
+                      disabled={chatSending}
+                      style={{ marginRight: 6 }}
+                      onClick={() => answerDecision(m.pending_decision, opt)}
+                    >
+                      {opt.label}
+                    </button>
                   ))}
                 </div>
               )}

@@ -1,6 +1,6 @@
 [
   {
-    "updatedAt": "2026-07-04T11:04:34.114Z",
+    "updatedAt": "2026-07-07T05:31:21.000Z",
     "createdAt": "2026-07-04T10:46:46.756Z",
     "id": "EcK7bqSZd2CiEBvH",
     "name": "Answer With Optional Split",
@@ -181,7 +181,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const runs = $input.all();\nlet parts = [], sources = [];\nfor (const r of runs) { const a = (r.json.answer || '').toString(); if (a) parts.push(a); const s = r.json.sources || []; if (Array.isArray(s)) sources.push(...s); }\nreturn [{ json: { answer: parts.join('\\n\\n'), sources } }];"
+          "jsCode": "const runs = $input.all();\nlet parts = [], sources = [];\nfor (const r of runs) {\n  const a = (r.json.answer || '').toString();\n  if (a && a !== 'NOT_IN_NOTES') parts.push(a);\n  const s = r.json.sources || [];\n  if (Array.isArray(s)) sources.push(...s);\n}\nconst answer = parts.length ? parts.join('\\n\\n') : 'NOT_IN_NOTES';\nreturn [{ json: { answer, sources } }];"
         },
         "id": "c0eaf997-aa33-4a05-9743-9fff1c16a603",
         "name": "Combine L2",
@@ -372,9 +372,9 @@
     },
     "nodeGroups": [],
     "pinData": {},
-    "versionId": "a983d7f3-d5df-47e0-ad29-fe34135096ac",
-    "activeVersionId": "a983d7f3-d5df-47e0-ad29-fe34135096ac",
-    "versionCounter": 10,
+    "versionId": "d3cb2984-0dec-4007-ad44-ff9415d94f11",
+    "activeVersionId": "d3cb2984-0dec-4007-ad44-ff9415d94f11",
+    "versionCounter": 11,
     "triggerCount": 0,
     "sourceWorkflowId": null,
     "tags": [],

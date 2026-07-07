@@ -41,13 +41,16 @@ async def ollama_tags() -> dict:
     return {"reachable": True, "models": models}
 
 
-async def chat(message: str, mode: str, history: list[dict]) -> dict:
+async def chat(message: str, mode: str, history: list[dict],
+               decision_response: dict | None = None) -> dict:
     """Relay one chat turn to the n8n webhook, or return a mock if unwired.
 
     mode is the explicit user read/write toggle — passed through untouched, never
-    inferred here. Response shape is always {reply, mode, sources, draft}, where
-    draft is {title, text} in write mode (an edit-gate preview, not yet saved) or
-    None in read mode.
+    inferred here. Response shape is always {reply, mode, sources, draft,
+    pending_decision}: draft is {title, text} in write mode (edit-gate preview) or
+    None; pending_decision is a generic {id, type, prompt, options[]} block when the
+    brain needs a user choice (e.g. offering a web search after NOT_IN_NOTES), else
+    None. decision_response ({id, choice}) carries the user's answer to a prior one.
     """
     if not N8N_CHAT_WEBHOOK:
         # TEMPORARY: n8n brain not built yet. Lets the chat UI round-trip before the
@@ -57,9 +60,11 @@ async def chat(message: str, mode: str, history: list[dict]) -> dict:
             "mode": mode,
             "sources": [],
             "draft": None,
+            "pending_decision": None,
         }
 
-    payload = {"message": message, "mode": mode, "history": history}
+    payload = {"message": message, "mode": mode, "history": history,
+               "decision_response": decision_response}
     async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0), follow_redirects=True) as client:
         resp = await client.post(N8N_CHAT_WEBHOOK, json=payload)
         resp.raise_for_status()
@@ -69,6 +74,7 @@ async def chat(message: str, mode: str, history: list[dict]) -> dict:
         "mode": data.get("mode", mode),
         "sources": data.get("sources", []),
         "draft": data.get("draft"),  # {title, text} in write mode, else None
+        "pending_decision": data.get("pending_decision"),  # {id,type,prompt,options[]} or None
     }
 
 

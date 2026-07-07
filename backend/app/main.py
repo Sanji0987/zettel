@@ -226,20 +226,24 @@ async def ollama_status() -> dict:
 
 
 class ChatIn(BaseModel):
-    message: str
+    message: str = ""  # may be empty when the turn only carries a decision_response
     mode: str = Field(default="read", pattern="^(read|write)$")
     history: list[dict] = Field(default_factory=list)
+    # The user's answer to a prior pending_decision: {"id": ..., "choice": ...}. Optional.
+    decision_response: dict | None = None
 
 
 @app.post("/api/chat")
 async def chat(body: ChatIn) -> dict:
     """Thin relay to the n8n chat webhook (or a mock until it's wired).
 
-    No AI/Ollama/Cognee logic here — FastAPI just forwards {message, mode, history}
-    and passes {reply, mode, sources} back. mode is the explicit user toggle.
+    No AI/Ollama/Cognee logic here — FastAPI just forwards {message, mode, history,
+    decision_response} and passes {reply, mode, sources, draft, pending_decision}
+    back. mode is the explicit user toggle; pending_decision drives the generic
+    mid-conversation decision UI.
     """
     try:
-        return await relay.chat(body.message, body.mode, body.history)
+        return await relay.chat(body.message, body.mode, body.history, body.decision_response)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"chat webhook error: {e}")
 

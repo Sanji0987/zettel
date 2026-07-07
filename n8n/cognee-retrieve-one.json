@@ -1,10 +1,10 @@
 [
   {
-    "updatedAt": "2026-07-04T10:40:13.681Z",
+    "updatedAt": "2026-07-07T05:34:34.000Z",
     "createdAt": "2026-07-04T10:40:00.807Z",
     "id": "5uv43KZGPL1Icge9",
     "name": "Cognee Retrieve One",
-    "description": "Shared retrieval unit: takes {query}, runs one Cognee GRAPH_COMPLETION search on zettelkeistan_v3, returns {answer, sources}. Called by the chat brain's read paths (simple + decompose leaves).",
+    "description": "Shared grounding unit: takes {query}, CHUNKS search on the active dataset, then Groq judges relevance and answers ONLY from the chunks (or NOT_IN_NOTES). Returns {answer, sources, grounded}.",
     "active": true,
     "isArchived": false,
     "nodes": [
@@ -22,21 +22,6 @@
         }
       },
       {
-        "id": "0f1bd552-5721-47d6-bbd3-11de9944ea8e",
-        "name": "Format Retrieval",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          700,
-          300
-        ],
-        "parameters": {
-          "mode": "runOnceForAllItems",
-          "language": "javaScript",
-          "jsCode": "const items = $input.all();\nlet sources = [];\nfor (const it of items) {\n  const sr = it.json.search_result;\n  if (Array.isArray(sr)) sources.push(...sr);\n  else if (sr != null && sr !== '') sources.push(sr);\n}\nsources = sources.map(s => typeof s === 'string' ? s : JSON.stringify(s)).filter(Boolean);\nconst answer = sources.join('\\n\\n');\nreturn [{ json: { answer, sources } }];"
-        }
-      },
-      {
         "id": "0c023e15-fe12-4ced-bd43-881d32285792",
         "name": "Cognee Search",
         "type": "n8n-nodes-cognee.cognee",
@@ -48,18 +33,88 @@
         "parameters": {
           "resource": "search",
           "operation": "search",
-          "searchType": "GRAPH_COMPLETION",
+          "searchType": "CHUNKS",
           "datasets": [
             "zettelkeistan_v3"
           ],
           "query": "={{ $json.query }}",
-          "topK": 10
+          "topK": 5
         },
         "credentials": {
           "cogneeApi": {
             "id": "rvhw3tMxtNWBoYSU",
             "name": "Cognee account"
           }
+        }
+      },
+      {
+        "id": "3415ee2c-e354-4c47-bd57-835434bb7967",
+        "name": "Format Chunks",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          700,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "// Extract raw chunk texts from the Cognee CHUNKS response (defensive on shape).\nconst items = $input.all();\nlet chunks = [];\nfunction pushText(c){\n  if(!c) return;\n  if(typeof c === 'string'){ if(c.trim()) chunks.push(c); }\n  else if(typeof c === 'object' && c.text){ chunks.push(c.text.toString()); }\n}\nfor(const it of items){\n  const j = it.json || {};\n  if(Array.isArray(j.search_result)) j.search_result.forEach(pushText);\n  else if(Array.isArray(j)) j.forEach(pushText);\n  else if(j.text) pushText(j);\n  else if(j.search_result) pushText(j.search_result);\n}\nchunks = [...new Set(chunks.filter(Boolean))];\nconst chunksText = chunks.map((c,i)=>'['+(i+1)+'] '+c).join('\\n\\n');\nconst query = ($('When Called').first().json.query || '').toString();\nreturn [{ json: { query, chunks, chunksText } }];\n"
+        }
+      },
+      {
+        "id": "15d7ed1b-ccb9-421c-b174-59a1730d4ef4",
+        "name": "Groq Judge",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          940,
+          300
+        ],
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $json.query }}",
+          "options": {
+            "systemMessage": "=You answer strictly from the note excerpts below. Use ONLY these excerpts to answer the question. If the excerpts do not actually contain information that answers the question, respond with exactly NOT_IN_NOTES and nothing else. Do not use any outside knowledge. Do not guess.\n\nNote excerpts:\n{{ $json.chunksText }}",
+            "enableStreaming": false
+          }
+        }
+      },
+      {
+        "id": "5d527371-6e98-459a-b1fb-4dc16f8452f0",
+        "name": "Groq Judge Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+        "typeVersion": 1,
+        "position": [
+          940,
+          480
+        ],
+        "parameters": {
+          "model": "openai/gpt-oss-120b",
+          "options": {
+            "temperature": 0.2
+          }
+        },
+        "credentials": {
+          "groqApi": {
+            "id": "woCh9CG7qUGXmSCX",
+            "name": "Groq account"
+          }
+        }
+      },
+      {
+        "id": "f549940c-3720-4189-8eca-184e1f0ad4b9",
+        "name": "Parse Judge",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1200,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "// Judge output -> grounded answer or the NOT_IN_NOTES sentinel.\nlet raw = ($input.first().json.output || '').toString();\nraw = raw.replace(/<think>[\\s\\S]*?<\\/think>/gi,'')\n         .replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi,'')\n         .replace(/<\\|?\\/?think\\|?>/gi,'').trim();\nconst notInNotes = /NOT_IN_NOTES/i.test(raw) || raw.length === 0;\nconst grounded = !notInNotes;\nconst sources = grounded ? ($('Format Chunks').first().json.chunks || []) : [];\nreturn [{ json: { answer: grounded ? raw : 'NOT_IN_NOTES', sources, grounded } }];\n"
         }
       }
     ],
@@ -79,8 +134,41 @@
         "main": [
           [
             {
-              "node": "Format Retrieval",
+              "node": "Format Chunks",
               "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Chunks": {
+        "main": [
+          [
+            {
+              "node": "Groq Judge",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Groq Judge": {
+        "main": [
+          [
+            {
+              "node": "Parse Judge",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Groq Judge Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Groq Judge",
+              "type": "ai_languageModel",
               "index": 0
             }
           ]
@@ -98,9 +186,9 @@
     },
     "nodeGroups": [],
     "pinData": null,
-    "versionId": "9139577c-ee9a-41dc-8be5-8c4f3dba0dc9",
-    "activeVersionId": "9139577c-ee9a-41dc-8be5-8c4f3dba0dc9",
-    "versionCounter": 2,
+    "versionId": "3694186a-28dc-4623-836e-b3ebcac8c846",
+    "activeVersionId": "3694186a-28dc-4623-836e-b3ebcac8c846",
+    "versionCounter": 4,
     "triggerCount": 0,
     "sourceWorkflowId": null,
     "tags": [],
@@ -125,8 +213,8 @@
       }
     ],
     "versionMetadata": {
-      "name": null,
-      "description": null
+      "name": "Version a63320d5",
+      "description": ""
     }
   }
 ]
