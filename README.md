@@ -21,8 +21,13 @@ from it.
   an atomic rebuild (build under a fresh name, cognify once, flip the pointer only on
   success). See [`API_CONTRACT.md`](API_CONTRACT.md) / [`FRONTEND_API.md`](FRONTEND_API.md).
 - **Chat** — a thin FastAPI relay (`POST /api/chat`) forwards to an n8n webhook (or a
-  mock). The n8n workflows live in [`n8n/`](n8n/): read mode does a length-gated,
-  **depth-2-bounded** Cognee decomposition; write mode drafts a note (edit gate, no save).
+  mock). The n8n workflows live in [`n8n/`](n8n/). Read mode is **grounded**: a CHUNKS
+  vector search is an *existence gate*, a Groq judge decides whether relevant note
+  content actually exists, and only then does a Cognee **GRAPH_COMPLETION** run for the
+  cross-note answer. If nothing relevant exists it says so and offers a web search
+  (see below) rather than confabulating — GRAPH_COMPLETION can't fire on an empty gate.
+  Long questions are length-gated into a **depth-2-bounded** decomposition, each
+  sub-question reusing the same gated unit. Write mode drafts a note (edit gate, no save).
 - **Model** — on `main`, chat reasoning runs on **Groq** (`openai/gpt-oss-120b`) via the
   n8n workflow, and offers **real web search** (Groq `groq/compound`) when your notes
   don't have the answer. The `ollama-version` branch uses the local `ollama` container
