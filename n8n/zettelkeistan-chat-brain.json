@@ -1,6 +1,6 @@
 [
   {
-    "updatedAt": "2026-07-07T05:31:23.000Z",
+    "updatedAt": "2026-07-07T06:10:35.000Z",
     "createdAt": "2026-07-04T06:33:35.231Z",
     "id": "esKtUJ1YYfLlyOAT",
     "name": "Zettelkeistan Chat Brain",
@@ -584,7 +584,7 @@
       },
       {
         "parameters": {
-          "model": "openai/gpt-oss-120b",
+          "model": "groq/compound",
           "options": {
             "temperature": 0.3
           }
@@ -608,15 +608,19 @@
         "parameters": {
           "promptType": "define",
           "text": "={{ $('Normalize Request').item.json.message }}",
-          "options": {
-            "systemMessage": "You are a general-knowledge assistant. The user's personal notes did NOT contain an answer to their question. Answer the question using your general knowledge. Be clear and concise.",
-            "enableStreaming": false
+          "messages": {
+            "messageValues": [
+              {
+                "type": "SystemMessagePromptTemplate",
+                "message": "You are a research assistant with live web search. The user's personal notes did not contain an answer to their question. Answer it using current information from the web. Be clear and concise."
+              }
+            ]
           }
         },
         "id": "d8b6305d-ba74-4450-88cc-77b977598335",
         "name": "Web Answer",
-        "type": "@n8n/n8n-nodes-langchain.agent",
-        "typeVersion": 3.1,
+        "type": "@n8n/n8n-nodes-langchain.chainLlm",
+        "typeVersion": 1.9,
         "position": [
           880,
           1520
@@ -626,7 +630,7 @@
         "parameters": {
           "mode": "runOnceForAllItems",
           "language": "javaScript",
-          "jsCode": "let reply = ($input.first().json.output || '').toString();\nreply = reply.replace(/<think>[\\s\\S]*?<\\/think>/gi,'').replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi,'').replace(/<\\|?\\/?think\\|?>/gi,'').trim();\nreply = '\u26a0\ufe0f Not from your notes \u2014 from general/web knowledge:\\n\\n' + reply;\nreturn [{ json: { reply, mode: 'read', sources: [], draft: null, pending_decision: null } }];"
+          "jsCode": "let reply = ($input.first().json.output ?? $input.first().json.text ?? '').toString();\nreply = reply.replace(/<think>[\\s\\S]*?<\\/think>/gi,'').replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi,'').replace(/<\\|?\\/?think\\|?>/gi,'').trim();\nreply = '\u26a0\ufe0f Not from your notes \u2014 from web search:\\n\\n' + reply;\nreturn [{ json: { reply, mode: 'read', sources: [], draft: null, pending_decision: null } }];"
         },
         "id": "9d123ce5-fb49-4c15-8294-f75418b0a742",
         "name": "Assemble Web",
@@ -999,8 +1003,8 @@
     },
     "nodeGroups": [],
     "pinData": {},
-    "versionId": "cbdd5c93-b03f-4257-a189-fd80bed268cc",
-    "activeVersionId": "cbdd5c93-b03f-4257-a189-fd80bed268cc",
+    "versionId": "9cb2fd3e-9bb3-4e77-96e0-c913489e945a",
+    "activeVersionId": "9cb2fd3e-9bb3-4e77-96e0-c913489e945a",
     "versionCounter": 45,
     "triggerCount": 1,
     "sourceWorkflowId": null,
