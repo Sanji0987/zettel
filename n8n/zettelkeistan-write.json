@@ -1,0 +1,368 @@
+[
+  {
+    "updatedAt": "2026-07-11T17:16:04.000Z",
+    "createdAt": "2026-07-11T17:16:02.322Z",
+    "id": "zettelWrite0001",
+    "name": "Zettelkeistan Write",
+    "description": null,
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "zettel-write",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "739b0074-fb7c-4640-8ca2-d423ff402bce",
+        "name": "Write Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          0,
+          300
+        ],
+        "webhookId": "5caf45db-e483-4ef7-bb2e-262e8806b33c"
+      },
+      {
+        "parameters": {
+          "jsCode": "const item = $input.first().json;\nconst b = item.body || item;\nconst op = b.op === 'refine' ? 'refine' : 'draft';\nconst history = Array.isArray(b.history) ? b.history : [];\nconst historyText = history.map(h => (h.role === 'assistant' ? 'Assistant: ' : 'User: ') + (h.content||'')).join('\\n');\nconst cd = b.current_draft || {};\nconst cdTags = Array.isArray(cd.tags) ? cd.tags : [];\nconst draftText = 'Title: ' + (cd.title||'') + '\\nTags: ' + cdTags.join(', ') + '\\n\\n' + (cd.text||'');\nconst rh = Array.isArray(b.refine_history) ? b.refine_history : [];\nconst refineText = rh.map(h => (h.role === 'assistant' ? 'Assistant: ' : 'User: ') + (h.content||'')).join('\\n');\nconst feedback = (b.feedback||'').toString();\nconst draftId = (b.draft_id||'').toString();\nreturn [{ json: { op, historyText, draftText, refineText, feedback, draftId, cdTitle:(cd.title||'').toString(), cdText:(cd.text||'').toString(), cdTags } }];"
+        },
+        "id": "ae3b2ffe-8a4d-4c75-8dfb-d0c47f304023",
+        "name": "Normalize",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          220,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "loose",
+                    "version": 1
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.op }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "draft"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "loose",
+                    "version": 1
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.op }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "refine"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "ac0430de-32e9-4521-875a-3bb00fa53795",
+        "name": "Route Op",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          440,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $json.historyText }}",
+          "options": {
+            "systemMessage": "You turn a chat conversation into a single atomic note (Zettelkasten style). Read the conversation and produce ONE JSON object with exactly these keys: {\"title\": a short title, \"text\": the note body as clear prose, \"tags\": an array of 3-6 short lowercase topical tags relevant to the content}. Output ONLY the JSON object. Do not save anything, do not call tools, do not add any text outside the JSON.",
+            "enableStreaming": false
+          }
+        },
+        "id": "6a5ef2c3-0b6a-4526-8edc-80d41fbfb431",
+        "name": "Draft Agent",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          680,
+          180
+        ]
+      },
+      {
+        "parameters": {
+          "model": "openai/gpt-oss-120b",
+          "options": {
+            "temperature": 0.3
+          }
+        },
+        "id": "f5b00300-f612-4497-b254-d67212f1d3a2",
+        "name": "Draft Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+        "typeVersion": 1,
+        "position": [
+          680,
+          360
+        ],
+        "credentials": {
+          "groqApi": {
+            "id": "woCh9CG7qUGXmSCX",
+            "name": "Groq account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "let raw = ($input.first().json.output || '').toString();\nraw = raw.replace(/<think>[\\s\\S]*?<\\/think>/gi,'').replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi,'').replace(/<\\|?\\/?think\\|?>/gi,'').replace(/```(?:json)?/gi,'').trim();\nlet o = {};\ntry { const m = raw.match(/\\{[\\s\\S]*\\}/); if (m) o = JSON.parse(m[0]); } catch(e) {}\nconst title = (o.title || '').toString().slice(0,500);\nconst text = (o.text || '').toString();\nlet tags = Array.isArray(o.tags) ? o.tags : (typeof o.tags === 'string' ? o.tags.split(',') : []);\ntags = tags.map(t => t.toString().trim().toLowerCase()).filter(Boolean).slice(0,8);\nconst draft_id = 'd_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);\nreturn [{ json: { draft_id, question: null, title, text, tags } }];"
+        },
+        "id": "41969cc2-65b2-40a1-a5de-bd6e2850eaac",
+        "name": "Parse Draft",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          900,
+          180
+        ]
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $json.feedback }}",
+          "options": {
+            "systemMessage": "=You are refining a draft note based on the user's feedback. Work from the CURRENT DRAFT and the refinement conversation below.\n\nCURRENT DRAFT:\n{{ $json.draftText }}\n\nREFINEMENT CONVERSATION SO FAR:\n{{ $json.refineText }}\n\nApply the user's latest feedback (the Human message) and return ONE JSON object with the UPDATED note: {\"title\":..., \"text\":..., \"tags\":[3-6 short lowercase tags]}. If \u2014 and ONLY if \u2014 you genuinely cannot proceed without clarification, instead return {\"question\": \"your question\"}. Output ONLY the JSON, nothing else.",
+            "enableStreaming": false
+          }
+        },
+        "id": "db8d7199-85a7-43d0-9c55-ee07c8ef7a36",
+        "name": "Refine Agent",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          680,
+          460
+        ]
+      },
+      {
+        "parameters": {
+          "model": "openai/gpt-oss-120b",
+          "options": {
+            "temperature": 0.3
+          }
+        },
+        "id": "41aedc6d-d499-402a-8224-acab881e3726",
+        "name": "Refine Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+        "typeVersion": 1,
+        "position": [
+          680,
+          640
+        ],
+        "credentials": {
+          "groqApi": {
+            "id": "woCh9CG7qUGXmSCX",
+            "name": "Groq account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "let raw = ($input.first().json.output || '').toString();\nraw = raw.replace(/<think>[\\s\\S]*?<\\/think>/gi,'').replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi,'').replace(/<\\|?\\/?think\\|?>/gi,'').replace(/```(?:json)?/gi,'').trim();\nlet o = {};\ntry { const m = raw.match(/\\{[\\s\\S]*\\}/); if (m) o = JSON.parse(m[0]); } catch(e) {}\nconst norm = $('Normalize').first().json;\nconst draft_id = (norm.draftId || '').toString();\nif (o.question && !o.title && !o.text) {\n  // Clarification: keep the current draft unchanged, just surface the question.\n  return [{ json: { draft_id, question: o.question.toString(), title: norm.cdTitle||'', text: norm.cdText||'', tags: norm.cdTags||[] } }];\n}\nconst title = (o.title || '').toString().slice(0,500);\nconst text = (o.text || '').toString();\nlet tags = Array.isArray(o.tags) ? o.tags : (typeof o.tags === 'string' ? o.tags.split(',') : []);\ntags = tags.map(t => t.toString().trim().toLowerCase()).filter(Boolean).slice(0,8);\nreturn [{ json: { draft_id, question: null, title, text, tags } }];"
+        },
+        "id": "041cc784-ac2f-48cc-a0e5-8bcd8dfcb977",
+        "name": "Parse Refine",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          900,
+          460
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        },
+        "id": "303a4cd3-1424-493d-8403-21478c9b3633",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.5,
+        "position": [
+          1140,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Write Webhook": {
+        "main": [
+          [
+            {
+              "node": "Normalize",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize": {
+        "main": [
+          [
+            {
+              "node": "Route Op",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Route Op": {
+        "main": [
+          [
+            {
+              "node": "Draft Agent",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Refine Agent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Draft Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Draft Agent",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Draft Agent": {
+        "main": [
+          [
+            {
+              "node": "Parse Draft",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Draft": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Refine Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Refine Agent",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Refine Agent": {
+        "main": [
+          [
+            {
+              "node": "Parse Refine",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Refine": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "staticData": null,
+    "meta": {},
+    "nodeGroups": [],
+    "pinData": null,
+    "versionId": "5acee302-5d95-4aa7-a97f-979c7dddcc48",
+    "activeVersionId": "5acee302-5d95-4aa7-a97f-979c7dddcc48",
+    "versionCounter": 1,
+    "triggerCount": 1,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-07-11T17:16:02.325Z",
+        "createdAt": "2026-07-11T17:16:02.325Z",
+        "role": "workflow:owner",
+        "workflowId": "zettelWrite0001",
+        "projectId": "S86c7EPeVU37mKZK",
+        "project": {
+          "updatedAt": "2026-06-16T07:25:59.747Z",
+          "createdAt": "2026-06-16T07:24:59.347Z",
+          "id": "S86c7EPeVU37mKZK",
+          "name": "Sanjith Saravanan <sanjay200617@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "433c1b86-b399-43fd-ad66-a983d5a77276"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": null,
+      "description": null
+    }
+  }
+]

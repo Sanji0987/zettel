@@ -74,6 +74,10 @@ def _migrate(conn) -> None:
         conn.execute("UPDATE notes SET sync_status = 'done' WHERE pending_ingest = 0")
     if "sync_error" not in cols:
         conn.execute("ALTER TABLE notes ADD COLUMN sync_error TEXT NOT NULL DEFAULT ''")
+    if "tags" not in cols:
+        # AI-generated (write flow) topical tags, stored newline-separated. First-class
+        # note field; exposed to the API as a list by _row_to_note.
+        conn.execute("ALTER TABLE notes ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_sync ON notes(sync_status)")
 
 
@@ -101,6 +105,7 @@ def _row_to_note(row: sqlite3.Row) -> dict:
         "text": row["text"],
         "label": row["label"],
         "references": row["references_"],
+        "tags": [t.strip() for t in (row["tags"] or "").split("\n") if t.strip()],
         "pending_ingest": sync_status != "done",
         "sync_status": sync_status,
         "sync_error": row["sync_error"],
@@ -114,14 +119,23 @@ TITLE_MAX = 500
 LABEL_MAX = 200
 
 
-def create_note(title: str, text: str, label: str = "", references: str = "") -> dict:
+def _tags_to_str(tags) -> str:
+    """Normalize tags (list or already-joined string) to the stored newline-separated form."""
+    if isinstance(tags, str):
+        items = tags.split("\n")
+    else:
+        items = list(tags or [])
+    return "\n".join(t.strip() for t in items if str(t).strip())
+
+
+def create_note(title: str, text: str, label: str = "", references: str = "", tags="") -> dict:
     ts = _now()
     with get_conn() as conn:
         # New note starts pending_ingest=1: it isn't in the graph until ingested/rebuilt.
         cur = conn.execute(
-            """INSERT INTO notes (title, text, label, references_, pending_ingest, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 1, ?, ?)""",
-            (title, text, label, references, ts, ts),
+            """INSERT INTO notes (title, text, label, references_, tags, pending_ingest, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, 1, ?, ?)""",
+            (title, text, label, references, _tags_to_str(tags), ts, ts),
         )
         note_id = cur.lastrowid
         row = conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()

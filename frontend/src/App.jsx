@@ -29,8 +29,16 @@ export default function App() {
   // ---- Chat state ----
   const [chatLog, setChatLog] = useState([]); // [{role:"user"|"assistant", content, sources?}]
   const [chatInput, setChatInput] = useState("");
-  const [chatMode, setChatMode] = useState("read"); // explicit user toggle: read | write
   const [chatSending, setChatSending] = useState(false);
+
+  // ---- Write flow (turn the current chat into a note via a draft/refine modal) ----
+  const [writeOpen, setWriteOpen] = useState(false);
+  const [writeDraft, setWriteDraft] = useState({ draft_id: "", title: "", text: "", tags: [] });
+  const [writeMessages, setWriteMessages] = useState([]); // refine transcript [{role,content}]
+  const [writeFeedback, setWriteFeedback] = useState("");
+  const [writeQuestion, setWriteQuestion] = useState(null);
+  const [writeBusy, setWriteBusy] = useState(false);
+  const [writeError, setWriteError] = useState(null);
   const [ollamaOk, setOllamaOk] = useState(null); // null = unknown, then bool
   const [cogneeOk, setCogneeOk] = useState(null);
   const chatLogRef = useRef(null);
@@ -291,7 +299,7 @@ export default function App() {
     if (!message || chatSending) return;
     const history = chatLog.map(({ role, content }) => ({ role, content }));
     setChatInput("");
-    postChat({ message, mode: chatMode, history }, { role: "user", content: message });
+    postChat({ message, mode: "read", history }, { role: "user", content: message });
   }
 
   // Generic: answer any pending_decision. The brain routes on {type, choice}; the
@@ -304,6 +312,94 @@ export default function App() {
       { message: "", mode: "read", history, decision_response: { id: pd.id, type: pd.type, choice: option.id } },
       { role: "user", content: option.label },
     );
+  }
+
+  // ---- Write: turn the current conversation into a draft note, then refine in a loop ----
+
+  async function startWrite() {
+    if (chatLog.length === 0 || writeBusy) return;
+    setWriteError(null);
+    setWriteQuestion(null);
+    setWriteMessages([]);
+    setWriteBusy(true);
+    setWriteOpen(true);
+    try {
+      const history = chatLog.map(({ role, content }) => ({ role, content }));
+      const res = await fetch(`${API}/write/draft`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ history }),
+      });
+      if (!res.ok) throw new Error(`Draft failed (${res.status})`);
+      const d = await res.json();
+      setWriteDraft({ draft_id: d.draft_id || "", title: d.title || "", text: d.text || "", tags: d.tags || [] });
+    } catch (e) {
+      setWriteError(e.message);
+    } finally {
+      setWriteBusy(false);
+    }
+  }
+
+  async function refineWrite() {
+    const feedback = writeFeedback.trim();
+    if (!feedback || writeBusy) return;
+    setWriteError(null);
+    setWriteBusy(true);
+    // The transcript we send carries context across iterations (with any prior question).
+    const refineHistory = [...writeMessages, { role: "user", content: feedback }];
+    setWriteMessages(refineHistory);
+    setWriteFeedback("");
+    setWriteQuestion(null);
+    try {
+      const res = await fetch(`${API}/write/refine`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          draft_id: writeDraft.draft_id,
+          current_draft: { title: writeDraft.title, text: writeDraft.text, tags: writeDraft.tags },
+          feedback,
+          refine_history: refineHistory,
+        }),
+      });
+      if (!res.ok) throw new Error(`Refine failed (${res.status})`);
+      const d = await res.json();
+      if (d.question) {
+        // Clarification: keep the current draft, show the question, keep looping.
+        setWriteQuestion(d.question);
+        setWriteMessages((m) => [...m, { role: "assistant", content: d.question }]);
+      } else {
+        setWriteDraft((cur) => ({
+          draft_id: d.draft_id || cur.draft_id,
+          title: d.title || "",
+          text: d.text || "",
+          tags: d.tags || [],
+        }));
+      }
+    } catch (e) {
+      setWriteError(e.message);
+    } finally {
+      setWriteBusy(false);
+    }
+  }
+
+  async function saveWrite() {
+    if (writeBusy) return;
+    setWriteError(null);
+    setWriteBusy(true);
+    try {
+      const res = await fetch(`${API}/write/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: writeDraft.title, text: writeDraft.text, tags: writeDraft.tags }),
+      });
+      if (!res.ok) throw new Error(`Save failed (${res.status})`);
+      setWriteOpen(false);
+      await loadNotes();
+    } catch (e) {
+      setWriteError(e.message);
+    } finally {
+      setWriteBusy(false);
+    }
   }
 
   const editing = selectedId !== null;
@@ -402,25 +498,19 @@ export default function App() {
               Ollama
             </span>
           </div>
-          <div className="segmented" role="tablist" aria-label="Chat mode">
-            <button
-              className={chatMode === "read" ? "active" : ""}
-              onClick={() => setChatMode("read")}
-            >
-              Read
-            </button>
-            <button
-              className={chatMode === "write" ? "active" : ""}
-              onClick={() => setChatMode("write")}
-            >
-              Write
-            </button>
-          </div>
+          <button
+            className="btn-primary"
+            onClick={startWrite}
+            disabled={chatLog.length === 0 || writeBusy}
+            title={chatLog.length === 0 ? "Chat first, then turn it into a note" : "Turn this conversation into a note"}
+          >
+            ✎ Write note
+          </button>
         </div>
 
         <div className="chat-log" ref={chatLogRef}>
           {chatLog.length === 0 && (
-            <p className="muted">Ask about your notes ({chatMode} mode).</p>
+            <p className="muted">Ask about your notes. Use ✎ Write note to turn a chat into a note.</p>
           )}
           {chatLog.map((m, i) => (
             <div key={i} className={`bubble ${m.role}`}>
@@ -479,6 +569,83 @@ export default function App() {
           </button>
         </div>
       </section>
+
+      {writeOpen && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
+          }}
+          onClick={() => !writeBusy && setWriteOpen(false)}
+        >
+          <div
+            style={{
+              background: "var(--bg, #1e1e1e)", color: "inherit", width: "min(680px, 92vw)",
+              maxHeight: "90vh", overflowY: "auto", padding: 20, borderRadius: 8,
+              border: "1px solid rgba(128,128,128,0.4)", display: "flex", flexDirection: "column", gap: 10,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: 0 }}>New note from this chat</h3>
+            {writeError && <p className="error">{writeError}</p>}
+
+            <label style={{ fontSize: "0.85em", opacity: 0.8 }}>Title</label>
+            <input
+              value={writeDraft.title}
+              disabled={writeBusy}
+              onChange={(e) => setWriteDraft({ ...writeDraft, title: e.target.value })}
+            />
+
+            <label style={{ fontSize: "0.85em", opacity: 0.8 }}>Text</label>
+            <textarea
+              value={writeDraft.text}
+              disabled={writeBusy}
+              rows={10}
+              onChange={(e) => setWriteDraft({ ...writeDraft, text: e.target.value })}
+            />
+
+            <label style={{ fontSize: "0.85em", opacity: 0.8 }}>Tags (comma-separated)</label>
+            <input
+              value={writeDraft.tags.join(", ")}
+              disabled={writeBusy}
+              onChange={(e) =>
+                setWriteDraft({
+                  ...writeDraft,
+                  tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean),
+                })
+              }
+            />
+
+            {writeQuestion && (
+              <p style={{ margin: "4px 0", padding: 8, background: "rgba(128,128,128,0.15)", borderRadius: 4 }}>
+                <strong>Assistant asks:</strong> {writeQuestion}
+              </p>
+            )}
+
+            <label style={{ fontSize: "0.85em", opacity: 0.8 }}>
+              Tell the assistant how to change it (e.g. "make it shorter", "add the part about X")
+            </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                style={{ flex: 1 }}
+                placeholder="Feedback…"
+                value={writeFeedback}
+                disabled={writeBusy}
+                onChange={(e) => setWriteFeedback(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && refineWrite()}
+              />
+              <button className="btn-ghost" onClick={refineWrite} disabled={writeBusy || !writeFeedback.trim()}>
+                {writeBusy ? "…" : "Send"}
+              </button>
+            </div>
+
+            <div className="actions" style={{ marginTop: 8, display: "flex", gap: 8 }}>
+              <button className="btn-primary" onClick={saveWrite} disabled={writeBusy}>Save note</button>
+              <button className="btn-ghost" onClick={() => setWriteOpen(false)} disabled={writeBusy}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

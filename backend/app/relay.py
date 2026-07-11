@@ -16,6 +16,9 @@ import httpx
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
 N8N_CHAT_WEBHOOK = os.environ.get("N8N_CHAT_WEBHOOK", "").strip()
+# The n8n write workflow webhook — draft/refine a note from the current conversation.
+# Empty -> mock mode (stub draft) so the UI round-trips before the workflow is wired.
+N8N_WRITE_WEBHOOK = os.environ.get("N8N_WRITE_WEBHOOK", "").strip()
 # The n8n sync worker's webhook — lets a manual "sync now" kick the worker immediately.
 # The worker ALSO runs on its own schedule (cron lives in n8n, not FastAPI). Empty = no-op.
 N8N_SYNC_WEBHOOK = os.environ.get("N8N_SYNC_WEBHOOK", "").strip()
@@ -75,6 +78,57 @@ async def chat(message: str, mode: str, history: list[dict],
         "sources": data.get("sources", []),
         "draft": data.get("draft"),  # {title, text} in write mode, else None
         "pending_decision": data.get("pending_decision"),  # {id,type,prompt,options[]} or None
+    }
+
+
+_WRITE_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
+
+
+async def write_draft(history: list[dict]) -> dict:
+    """Summarize the current conversation into a draft note. Relay to the n8n write
+    workflow (op=draft), or return a mock draft if unwired. Shape: {draft_id, title,
+    text, tags[]}."""
+    if not N8N_WRITE_WEBHOOK:
+        joined = " ".join(h.get("content", "") for h in history if h.get("role") == "user")
+        return {"draft_id": "mock", "title": "Draft note",
+                "text": f"[mock] n8n write not wired. From chat: {joined[:400]}",
+                "tags": ["mock"]}
+    async with httpx.AsyncClient(timeout=_WRITE_TIMEOUT, follow_redirects=True) as client:
+        resp = await client.post(N8N_WRITE_WEBHOOK, json={"op": "draft", "history": history})
+        resp.raise_for_status()
+        data = resp.json()
+    return {
+        "draft_id": data.get("draft_id", ""),
+        "title": data.get("title", ""),
+        "text": data.get("text", ""),
+        "tags": data.get("tags", []) or [],
+    }
+
+
+async def write_refine(draft_id: str, current_draft: dict, feedback: str,
+                       refine_history: list[dict]) -> dict:
+    """Refine the draft from the user's feedback (op=refine). The full refinement
+    context is carried each call: the latest current_draft plus refine_history (the
+    running transcript), so the model has cross-iteration context with no server state.
+    Returns {draft_id, title, text, tags[], question} — question is set instead of a new
+    draft when the model needs clarification."""
+    if not N8N_WRITE_WEBHOOK:
+        d = current_draft or {}
+        return {"draft_id": draft_id, "title": d.get("title", ""),
+                "text": (d.get("text", "") + f"\n\n[mock refine: {feedback}]").strip(),
+                "tags": d.get("tags", []) or [], "question": None}
+    payload = {"op": "refine", "draft_id": draft_id, "current_draft": current_draft,
+               "feedback": feedback, "refine_history": refine_history}
+    async with httpx.AsyncClient(timeout=_WRITE_TIMEOUT, follow_redirects=True) as client:
+        resp = await client.post(N8N_WRITE_WEBHOOK, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    return {
+        "draft_id": data.get("draft_id", draft_id),
+        "title": data.get("title", ""),
+        "text": data.get("text", ""),
+        "tags": data.get("tags", []) or [],
+        "question": data.get("question") or None,
     }
 
 

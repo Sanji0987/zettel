@@ -52,6 +52,7 @@ class NoteIn(BaseModel):
 
 class NoteOut(NoteIn):
     id: int
+    tags: list[str] = Field(default_factory=list)
     pending_ingest: bool
     created_at: str
     updated_at: str
@@ -246,6 +247,63 @@ async def chat(body: ChatIn) -> dict:
         return await relay.chat(body.message, body.mode, body.history, body.decision_response)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"chat webhook error: {e}")
+
+
+# ---- Write flow: turn the current chat into a note (draft -> refine loop -> save) ----
+# draft/refine are thin relays to the n8n write workflow (no AI here). save is pure SQLite:
+# it creates the note with pending_ingest=1 and lets the cron sync worker ingest it later —
+# never an inline Cognee call.
+
+class WriteDraftIn(BaseModel):
+    history: list[dict] = Field(default_factory=list)
+
+
+class DraftBody(BaseModel):
+    title: str = ""
+    text: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+
+class WriteRefineIn(BaseModel):
+    draft_id: str = ""
+    current_draft: DraftBody = Field(default_factory=DraftBody)
+    feedback: str = ""
+    # Running transcript of the refinement conversation (user feedback + any LLM questions),
+    # so the model has full cross-iteration context without server-side session state.
+    refine_history: list[dict] = Field(default_factory=list)
+
+
+class WriteSaveIn(BaseModel):
+    title: str = Field(default="", max_length=500)
+    text: str = Field(default="")
+    tags: list[str] = Field(default_factory=list)
+
+
+@app.post("/api/write/draft")
+async def write_draft(body: WriteDraftIn) -> dict:
+    """Summarize the current conversation into a draft note {draft_id, title, text, tags}."""
+    try:
+        return await relay.write_draft(body.history)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"write webhook error: {e}")
+
+
+@app.post("/api/write/refine")
+async def write_refine(body: WriteRefineIn) -> dict:
+    """Refine the draft from user feedback; may return a clarifying `question` instead."""
+    try:
+        return await relay.write_refine(
+            body.draft_id, body.current_draft.model_dump(), body.feedback, body.refine_history
+        )
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"write webhook error: {e}")
+
+
+@app.post("/api/write/save", response_model=NoteOut, status_code=201)
+def write_save(body: WriteSaveIn) -> dict:
+    """Create the final note in SQLite (pending_ingest=1). No inline Cognee — the cron
+    sync worker picks it up on the next tick."""
+    return db.create_note(body.title, body.text, tags=body.tags)
 
 
 # ---- Sync layer (queue + cron-driven worker) ---------------------------

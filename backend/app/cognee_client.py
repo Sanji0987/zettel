@@ -139,9 +139,14 @@ def note_node_set(note_id: int) -> str:
 
 
 def note_payload(note: dict) -> str:
-    """The text we send to Cognee for a note: title, blank line, then body. One shared
-    definition for single-note ingest, the sync sweep, and rebuild."""
-    return f"{note['title']}\n\n{note['text']}".strip()
+    """The text we send to Cognee for a note: title, blank line, then body, plus a Tags
+    line when present (tags enrich the graph). One shared definition for single-note
+    ingest, the sync sweep, and rebuild."""
+    body = f"{note['title']}\n\n{note['text']}".strip()
+    tags = note.get("tags") or []
+    if tags:
+        body += "\n\nTags: " + ", ".join(tags)
+    return body
 
 
 async def add_note_chunks(note_id: int, text: str, dataset: str | None = None) -> int:

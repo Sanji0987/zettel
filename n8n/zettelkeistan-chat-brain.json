@@ -1,6 +1,6 @@
 [
   {
-    "updatedAt": "2026-07-07T06:10:35.000Z",
+    "updatedAt": "2026-07-11T17:17:46.000Z",
     "createdAt": "2026-07-04T06:33:35.231Z",
     "id": "esKtUJ1YYfLlyOAT",
     "name": "Zettelkeistan Chat Brain",
@@ -40,65 +40,6 @@
       },
       {
         "parameters": {
-          "rules": {
-            "values": [
-              {
-                "conditions": {
-                  "options": {
-                    "caseSensitive": false,
-                    "leftValue": "",
-                    "typeValidation": "loose",
-                    "version": 1
-                  },
-                  "conditions": [
-                    {
-                      "leftValue": "={{ $json.mode }}",
-                      "operator": {
-                        "type": "string",
-                        "operation": "equals"
-                      },
-                      "rightValue": "read"
-                    }
-                  ],
-                  "combinator": "and"
-                }
-              },
-              {
-                "conditions": {
-                  "options": {
-                    "caseSensitive": false,
-                    "leftValue": "",
-                    "typeValidation": "loose",
-                    "version": 1
-                  },
-                  "conditions": [
-                    {
-                      "leftValue": "={{ $json.mode }}",
-                      "operator": {
-                        "type": "string",
-                        "operation": "equals"
-                      },
-                      "rightValue": "write"
-                    }
-                  ],
-                  "combinator": "and"
-                }
-              }
-            ]
-          },
-          "options": {}
-        },
-        "id": "2508fc76-67de-4875-adbc-7f012fc70e38",
-        "name": "Route By Mode",
-        "type": "n8n-nodes-base.switch",
-        "typeVersion": 3.4,
-        "position": [
-          480,
-          400
-        ]
-      },
-      {
-        "parameters": {
           "respondWith": "json",
           "responseBody": "={{ $json }}",
           "options": {}
@@ -110,60 +51,6 @@
         "position": [
           3184,
           272
-        ]
-      },
-      {
-        "parameters": {
-          "promptType": "define",
-          "text": "={{ $('Normalize Request').item.json.message }}",
-          "options": {
-            "systemMessage": "You turn the user's message into a single atomic note. Respond with ONLY a JSON object of the form {\"title\": \"short title\", \"text\": \"note body\"}. Do not save anything, do not call tools, and do not add any text outside the JSON.",
-            "maxIterations": 2,
-            "enableStreaming": false
-          }
-        },
-        "id": "7cf4f1df-997f-403b-81e9-8e996e22b021",
-        "name": "Draft Note",
-        "type": "@n8n/n8n-nodes-langchain.agent",
-        "typeVersion": 3.1,
-        "position": [
-          2096,
-          1232
-        ]
-      },
-      {
-        "parameters": {
-          "model": "openai/gpt-oss-120b",
-          "options": {
-            "temperature": 0.2
-          }
-        },
-        "id": "75871850-711d-4b87-a449-9263dcc0d23e",
-        "name": "Groq Write Model",
-        "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
-        "typeVersion": 1,
-        "position": [
-          2096,
-          1408
-        ],
-        "credentials": {
-          "groqApi": {
-            "id": "woCh9CG7qUGXmSCX",
-            "name": "Groq account"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "jsCode": "let raw = ($input.first().json.output || '').toString();\nraw = raw.replace(/<think>[\\s\\S]*?<\\/think>/gi, '');\nraw = raw.replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi, '');\nraw = raw.replace(/<\\|?\\/?think\\|?>/gi, '').trim();\nlet draft = null;\ntry { const m = raw.match(/\\{[\\s\\S]*\\}/); if (m) { const o = JSON.parse(m[0]); draft = { title: (o.title || '').toString().slice(0, 500), text: (o.text || '').toString() }; } } catch (e) { draft = null; }\nif (!draft) { draft = { title: '', text: raw }; }\nconst reply = draft.title ? ('Draft: ' + draft.title + '\\n\\n' + draft.text) : ('Draft:\\n\\n' + draft.text);\nreturn [{ json: { reply, mode: 'write', sources: [], draft, pending_decision: null } }];"
-        },
-        "id": "747d920b-9fda-421a-9a0b-a2ee025a3ab9",
-        "name": "Assemble Write Draft",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          2368,
-          1232
         ]
       },
       {
@@ -538,8 +425,8 @@
         "type": "n8n-nodes-base.switch",
         "typeVersion": 3.4,
         "position": [
-          384,
-          384
+          416,
+          752
         ]
       },
       {
@@ -578,8 +465,8 @@
         "type": "n8n-nodes-base.switch",
         "typeVersion": 3.4,
         "position": [
-          640,
-          1600
+          608,
+          1136
         ]
       },
       {
@@ -594,8 +481,8 @@
         "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
         "typeVersion": 1,
         "position": [
-          880,
-          1760
+          848,
+          1296
         ],
         "credentials": {
           "groqApi": {
@@ -611,25 +498,23 @@
           "messages": {
             "messageValues": [
               {
-                "type": "SystemMessagePromptTemplate",
                 "message": "You are a research assistant with live web search. The user's personal notes did not contain an answer to their question. Answer it using current information from the web. Be clear and concise."
               }
             ]
-          }
+          },
+          "batching": {}
         },
         "id": "d8b6305d-ba74-4450-88cc-77b977598335",
         "name": "Web Answer",
         "type": "@n8n/n8n-nodes-langchain.chainLlm",
         "typeVersion": 1.9,
         "position": [
-          880,
-          1520
+          848,
+          1056
         ]
       },
       {
         "parameters": {
-          "mode": "runOnceForAllItems",
-          "language": "javaScript",
           "jsCode": "let reply = ($input.first().json.output ?? $input.first().json.text ?? '').toString();\nreply = reply.replace(/<think>[\\s\\S]*?<\\/think>/gi,'').replace(/<\\|think\\|>[\\s\\S]*?<\\|\\/?think\\|>/gi,'').replace(/<\\|?\\/?think\\|?>/gi,'').trim();\nreply = '\u26a0\ufe0f Not from your notes \u2014 from web search:\\n\\n' + reply;\nreturn [{ json: { reply, mode: 'read', sources: [], draft: null, pending_decision: null } }];"
         },
         "id": "9d123ce5-fb49-4c15-8294-f75418b0a742",
@@ -637,14 +522,12 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          1200,
-          1520
+          1168,
+          1056
         ]
       },
       {
         "parameters": {
-          "mode": "runOnceForAllItems",
-          "language": "javaScript",
           "jsCode": "return [{ json: { reply: \"Okay \u2014 I'll leave it there.\", mode: 'read', sources: [], draft: null, pending_decision: null } }];"
         },
         "id": "3e4c33e0-7afe-43ad-847d-72cfe9bd9952",
@@ -652,8 +535,8 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          880,
-          1920
+          848,
+          1456
         ]
       }
     ],
@@ -674,46 +557,6 @@
           [
             {
               "node": "Route Kind",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Route By Mode": {
-        "main": [
-          [
-            {
-              "node": "Length Gate",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Draft Note",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Draft Note": {
-        "main": [
-          [
-            {
-              "node": "Assemble Write Draft",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Assemble Write Draft": {
-        "main": [
-          [
-            {
-              "node": "Respond",
               "type": "main",
               "index": 0
             }
@@ -899,17 +742,6 @@
           ]
         ]
       },
-      "Groq Write Model": {
-        "ai_languageModel": [
-          [
-            {
-              "node": "Draft Note",
-              "type": "ai_languageModel",
-              "index": 0
-            }
-          ]
-        ]
-      },
       "Route Kind": {
         "main": [
           [
@@ -921,7 +753,7 @@
           ],
           [
             {
-              "node": "Route By Mode",
+              "node": "Length Gate",
               "type": "main",
               "index": 0
             }
@@ -1003,9 +835,9 @@
     },
     "nodeGroups": [],
     "pinData": {},
-    "versionId": "9cb2fd3e-9bb3-4e77-96e0-c913489e945a",
-    "activeVersionId": "9cb2fd3e-9bb3-4e77-96e0-c913489e945a",
-    "versionCounter": 45,
+    "versionId": "b59e98fe-a7c7-4322-b83d-3ed1de7a5b3f",
+    "activeVersionId": "b59e98fe-a7c7-4322-b83d-3ed1de7a5b3f",
+    "versionCounter": 52,
     "triggerCount": 1,
     "sourceWorkflowId": null,
     "tags": [],
